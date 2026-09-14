@@ -26,9 +26,57 @@ p.sub{
   margin-top:6px;font-size:.68rem;color:var(--muted);
   letter-spacing:.12em;text-transform:uppercase;text-align:center;
 }
-#city-wrap{
-  position:relative;width:min(420px,92vw);margin:16px auto 0;
+#filters{
+  display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;
+  justify-content:center;width:min(640px,94vw);margin:16px auto 0;
 }
+#city-wrap{
+  position:relative;flex:1 1 280px;min-width:220px;
+}
+#date-wrap{
+  position:relative;flex:0 0 auto;display:flex;align-items:center;gap:6px;
+}
+#date{display:none}
+#date-btn{
+  background:#0d1829;color:var(--text);
+  border:1px solid var(--border);border-radius:4px;
+  padding:10px 12px;font:inherit;font-size:.85rem;
+  letter-spacing:.04em;cursor:pointer;min-width:148px;text-align:left;
+}
+#date-btn:hover,#date-btn[aria-expanded="true"]{border-color:#4a7fa0}
+#today-dot{
+  width:18px;height:18px;border-radius:50%;padding:0;
+  border:2px solid var(--gold);background:transparent;cursor:pointer;
+  flex-shrink:0;
+}
+#today-dot:hover{background:#e8d8a044}
+#today-dot.on{background:var(--gold)}
+#cal{
+  display:none;position:absolute;right:0;top:calc(100% + 4px);
+  width:252px;background:#0a1220;border:1px solid #2a3f5f;border-radius:6px;
+  padding:10px;z-index:25;box-shadow:0 8px 28px #000a;
+}
+#cal.open{display:block}
+#cal-head{
+  display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:8px;
+}
+#cal-head button{
+  background:none;border:0;color:var(--gold);cursor:pointer;font:inherit;padding:4px 6px;
+}
+#cal-title{flex:1;text-align:center;color:var(--gold);cursor:pointer;font-size:.78rem;letter-spacing:.06em}
+#cal-title:hover{color:#fff}
+#cal-grid{display:grid;gap:2px}
+#cal-grid.days{grid-template-columns:repeat(7,1fr)}
+#cal-grid.months,#cal-grid.years{grid-template-columns:repeat(3,1fr)}
+#cal-grid .dow{text-align:center;color:var(--muted);font-size:.58rem;padding:4px 0}
+#cal-grid button{
+  background:none;border:0;color:var(--text);cursor:pointer;font:inherit;
+  font-size:.75rem;padding:7px 0;border-radius:4px;
+}
+#cal-grid button:hover{background:#13233a}
+#cal-grid button.out{color:#2a3f5f}
+#cal-grid button.sel{background:#1a3a55;color:var(--gold)}
+#cal-grid button.today{box-shadow:inset 0 0 0 1px var(--gold)}
 #city{
   width:100%;background:#0d1829;color:var(--text);
   border:1px solid var(--border);border-radius:4px;
@@ -119,13 +167,28 @@ svg{display:block;width:100%;overflow:visible}
 <body>
 <h1>Where in the Zman? — <b id="cityTitle">Jerusalem</b></h1>
 <p class="sub" id="sub">Loading HebCal…</p>
+<div id="filters">
 <div id="city-wrap">
   <span id="city-icon">⌕</span>
   <input id="city" type="text" role="combobox" autocomplete="off"
     aria-autocomplete="list" aria-expanded="false" aria-controls="suggest"
-    placeholder="Search cities…"/>
+    placeholder="Search cities…" value="Jerusalem, Israel"/>
   <button type="button" id="locate" title="Use my location" aria-label="Use my location">⌖</button>
   <div id="suggest" role="listbox"></div>
+</div>
+<div id="date-wrap">
+  <input id="date" type="date" aria-hidden="true" tabindex="-1"/>
+  <button type="button" id="date-btn" aria-haspopup="dialog" aria-expanded="false">Today</button>
+  <button type="button" id="today-dot" title="Jump to today" aria-label="Jump to today"></button>
+  <div id="cal" hidden>
+    <div id="cal-head">
+      <button type="button" id="cal-prev" aria-label="Previous">‹</button>
+      <button type="button" id="cal-title"></button>
+      <button type="button" id="cal-next" aria-label="Next">›</button>
+    </div>
+    <div id="cal-grid" class="days"></div>
+  </div>
+</div>
 </div>
 <div id="city-hint">Click the box to search · ⌖ uses your location</div>
 <div id="wrap">
@@ -157,6 +220,7 @@ const WINDOW_DEFS = [
 
 let LOCATION = {name:'Jerusalem, Israel', lat:31.76904, lng:35.21633, tzid:'Asia/Jerusalem', geonameid:281184, geo:'geoname', cc:'IL'};
 let DATE_STR = '2026-09-14';
+let LAST_PLACE = null;
 let TZ_ABBR = 'IDT';
 let ZMANIM_RAW = {};
 let ZMANIM_WINDOWS = [];
@@ -329,10 +393,23 @@ function locQuery(place){
   return 'geonameid=' + encodeURIComponent(place.geonameid || place.id);
 }
 
+function isViewingToday(){
+  const tz = LOCATION.tzid || 'UTC';
+  return DATE_STR === todayInTz(tz);
+}
+
+function selectedDateStr(tzid){
+  const el = document.getElementById('date');
+  const raw = el && el.value;
+  if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return todayInTz(tzid || LOCATION.tzid || 'UTC');
+}
+
 async function loadPlace(place){
+  LAST_PLACE = place;
   document.getElementById('sub').textContent = 'Loading HebCal…';
   const tzGuess = place.tzid || LOCATION.tzid || 'UTC';
-  DATE_STR = todayInTz(tzGuess);
+  DATE_STR = selectedDateStr(tzGuess);
 
   const zUrl = `${HEBCAL}/zmanim?cfg=json&sec=1&ue=on&date=${DATE_STR}&${locQuery(place)}`;
   const zmanim = await fetch(zUrl).then(r => {
@@ -352,6 +429,8 @@ async function loadPlace(place){
     cc: loc.cc || place.cc || ''
   };
   DATE_STR = (zmanim.date || DATE_STR).slice(0, 10);
+  if (dateEl.value !== DATE_STR) dateEl.value = DATE_STR;
+  if (typeof syncDateChrome === 'function') syncDateChrome();
 
   const t = zmanim.times || {};
   ZMANIM_RAW = {
@@ -555,7 +634,7 @@ function getNowMs(){
 }
 
 function updateNowLine(){
-  if (!nowLineEl || !xS_global) return;
+  if (!nowLineEl || !xS_global || !isViewingToday()) return;
   const x = xS_global(getNowMs());
   nowLineEl.setAttribute('x1', x); nowLineEl.setAttribute('x2', x);
   if (nowLineHitEl){ nowLineHitEl.setAttribute('x1', x); nowLineHitEl.setAttribute('x2', x); }
@@ -680,29 +759,31 @@ function render(){
     hitPath.addEventListener('mouseleave', hideHover);
   });
 
-  const nowX = xS(getNowMs());
-  nowLineEl = el('line', {
-    x1:nowX, x2:nowX, y1:0, y2:iH,
-    stroke:'#22d3a055', 'stroke-width':2, 'stroke-dasharray':'4 3',
-    'clip-path':'url(#chartClip)'
-  }, g);
-  const nowLabel = el('text', {x:nowX, y:-5, 'text-anchor':'middle', fill:'#22d3a0aa', 'font-size':9}, g);
-  nowLabel.textContent = 'Now';
-  nowLineHitEl = el('line', {
-    x1:nowX, x2:nowX, y1:0, y2:iH,
-    stroke:'transparent', 'stroke-width':16, cursor:'pointer',
-    'clip-path':'url(#chartClip)'
-  }, g);
-  nowLineHitEl.addEventListener('click', evt => {
-    evt.stopPropagation();
-    if (selectedId === 'now'){ closePin(); return; }
-    selectLane('now');
-  });
-  nowLineHitEl.addEventListener('mousemove', evt => {
-    evt.stopPropagation();
-    showHoverNow(evt.clientX, evt.clientY);
-  });
-  nowLineHitEl.addEventListener('mouseleave', hideHover);
+  if (isViewingToday()){
+    const nowX = xS(getNowMs());
+    nowLineEl = el('line', {
+      x1:nowX, x2:nowX, y1:0, y2:iH,
+      stroke:'#22d3a055', 'stroke-width':2, 'stroke-dasharray':'4 3',
+      'clip-path':'url(#chartClip)'
+    }, g);
+    const nowLabel = el('text', {x:nowX, y:-5, 'text-anchor':'middle', fill:'#22d3a0aa', 'font-size':9}, g);
+    nowLabel.textContent = 'Now';
+    nowLineHitEl = el('line', {
+      x1:nowX, x2:nowX, y1:0, y2:iH,
+      stroke:'transparent', 'stroke-width':16, cursor:'pointer',
+      'clip-path':'url(#chartClip)'
+    }, g);
+    nowLineHitEl.addEventListener('click', evt => {
+      evt.stopPropagation();
+      if (selectedId === 'now'){ closePin(); return; }
+      selectLane('now');
+    });
+    nowLineHitEl.addEventListener('mousemove', evt => {
+      evt.stopPropagation();
+      showHoverNow(evt.clientX, evt.clientY);
+    });
+    nowLineHitEl.addEventListener('mouseleave', hideHover);
+  }
 
   const axBot = el('g', {transform:`translate(0,${iH})`}, g);
   el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#1e2d45'}, axBot);
@@ -734,15 +815,17 @@ function render(){
 
   const leg = document.getElementById('legend');
   leg.innerHTML = '';
-  const nowItem = document.createElement('div');
-  nowItem.className = 'li'; nowItem.setAttribute('data-id', 'now');
-  nowItem.innerHTML = '<div class="ls" style="background:#22d3a0;border:1px dashed #22d3a0"></div>'
-    + '<span>Now <span style="opacity:.45;font-size:.6rem">current time</span></span>';
-  nowItem.addEventListener('click', () => {
-    if (selectedId === 'now'){ closePin(); return; }
-    selectLane('now');
-  });
-  leg.appendChild(nowItem);
+  if (isViewingToday()){
+    const nowItem = document.createElement('div');
+    nowItem.className = 'li'; nowItem.setAttribute('data-id', 'now');
+    nowItem.innerHTML = '<div class="ls" style="background:#22d3a0;border:1px dashed #22d3a0"></div>'
+      + '<span>Now <span style="opacity:.45;font-size:.6rem">current time</span></span>';
+    nowItem.addEventListener('click', () => {
+      if (selectedId === 'now'){ closePin(); return; }
+      selectLane('now');
+    });
+    leg.appendChild(nowItem);
+  }
   [{color:'#f5c842', label:'Sun altitude'}, {color:'#8ab4d8', label:'Moon altitude (mirrored)'}]
     .forEach(z => {
       const d = document.createElement('div'); d.className = 'li';
@@ -864,13 +947,13 @@ function renderSuggest(items, emptyMsg){
   suggestEl.innerHTML = '';
   const locRow = document.createElement('button');
   locRow.type = 'button';
-  locRow.innerHTML = '<span>⌖ Use my location</span><div class="meta">Nearest city</div>';
+  locRow.innerHTML = '<span>⌖ Use my location</span><div class="meta">Nearest city in the GeoNames list</div>';
   locRow.addEventListener('mousedown', evt => { evt.preventDefault(); useMyLocation(); });
   suggestEl.appendChild(locRow);
   if (!items.length){
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = emptyMsg || 'Type to search';
+    empty.textContent = emptyMsg || 'Type 2+ letters to search 147,968 cities';
     suggestEl.appendChild(empty);
   } else {
     items.forEach((it, i) => {
@@ -878,7 +961,7 @@ function renderSuggest(items, emptyMsg){
       b.type = 'button';
       b.setAttribute('role', 'option');
       b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false');
-      b.innerHTML = `<span>${it.value}</span><div class="meta">${it.cc || ''}</div>`;
+      b.innerHTML = `<span>${it.value}</span><div class="meta">${it.cc || ''} · geonameid ${it.geonameid}</div>`;
       b.addEventListener('mousedown', evt => { evt.preventDefault(); pickPlace(it); });
       suggestEl.appendChild(b);
     });
@@ -937,7 +1020,7 @@ async function useMyLocation(){
 cityInput.addEventListener('focus', () => {
   if (cityInput.value === committedLabel) cityInput.value = '';
   ensureCities().then(() => {
-    if (cityInput.value.trim().length < 2) renderSuggest([], 'Type to search');
+    if (cityInput.value.trim().length < 2) renderSuggest([], 'Type 2+ letters to search 147,968 cities');
   }).catch(() => renderSuggest([], 'City list failed to load'));
 });
 cityInput.addEventListener('blur', () => {
@@ -949,7 +1032,7 @@ cityInput.addEventListener('input', () => {
   const q = cityInput.value.trim();
   clearTimeout(acTimer);
   if (q.length < 2){
-    renderSuggest([], 'Type to search');
+    renderSuggest([], 'Type 2+ letters to search 147,968 cities');
     return;
   }
   acTimer = setTimeout(() => {
@@ -990,21 +1073,202 @@ document.addEventListener('keydown', evt => {
   if (evt.key === 'Escape'){ hideHover(); closePin(); }
 });
 
-(function boot(){
-  let place = DEFAULT_PLACE;
+function readSavedPlace(){
   try {
     const saved = JSON.parse(localStorage.getItem('witz-place') || 'null');
-    if (saved && (saved.geonameid || saved.id) && saved.geo !== 'pos' && saved.geo !== 'zip') {
-      place = {
-        id: saved.geonameid || saved.id,
-        geonameid: saved.geonameid || saved.id,
-        value: saved.value || DEFAULT_PLACE.value,
-        geo: 'geoname'
-      };
+    const id = Number(saved && (saved.geonameid || saved.id));
+    if (!saved || !Number.isFinite(id) || id <= 0) return null;
+    if (saved.geo && saved.geo !== 'geoname') return null;
+    return {
+      id,
+      geonameid: id,
+      value: saved.value || DEFAULT_PLACE.value,
+      geo: 'geoname',
+      cc: saved.cc || ''
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const dateEl = document.getElementById('date');
+const dateBtn = document.getElementById('date-btn');
+const todayDot = document.getElementById('today-dot');
+const calEl = document.getElementById('cal');
+const calTitle = document.getElementById('cal-title');
+const calGrid = document.getElementById('cal-grid');
+let calView = 'day';
+let calY = 2026, calM = 8;
+
+function parseYMD(s){
+  const [y,m,d] = (s || '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return {y, m, d};
+}
+
+function fmtDateBtn(s){
+  const p = parseYMD(s);
+  if (!p) return 'Today';
+  const today = todayInTz(LOCATION.tzid || 'UTC');
+  if (s === today) return 'Today · ' + p.d + ' ' + MONTHS[p.m-1].slice(0,3);
+  return p.d + ' ' + MONTHS[p.m-1].slice(0,3) + ' ' + p.y;
+}
+
+function syncDateChrome(){
+  const today = todayInTz(LOCATION.tzid || 'UTC');
+  const val = dateEl.value || today;
+  dateBtn.textContent = fmtDateBtn(val);
+  todayDot.classList.toggle('on', val === today);
+}
+
+function applyDate(ymd, reload){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+  if (dateEl.value !== ymd) dateEl.value = ymd;
+  syncDateChrome();
+  closeCal();
+  if (reload !== false && LAST_PLACE){
+    loadPlace(LAST_PLACE).catch(err => {
+      document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
+    });
+  }
+}
+
+function jumpToday(){
+  applyDate(todayInTz(LOCATION.tzid || 'UTC'), true);
+}
+
+function openCal(){
+  const p = parseYMD(dateEl.value) || parseYMD(todayInTz(LOCATION.tzid || 'UTC'));
+  calY = p.y; calM = p.m - 1; calView = 'day';
+  calEl.hidden = false;
+  calEl.classList.add('open');
+  dateBtn.setAttribute('aria-expanded', 'true');
+  drawCal();
+}
+
+function closeCal(){
+  calEl.classList.remove('open');
+  calEl.hidden = true;
+  dateBtn.setAttribute('aria-expanded', 'false');
+}
+
+function drawCal(){
+  const today = todayInTz(LOCATION.tzid || 'UTC');
+  const sel = dateEl.value || today;
+  calGrid.innerHTML = '';
+  if (calView === 'year'){
+    const start = Math.floor(calY / 12) * 12;
+    calTitle.textContent = start + ' – ' + (start + 11);
+    calGrid.className = 'years';
+    for (let y = start; y < start + 12; y++){
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = y;
+      if (String(y) === sel.slice(0,4)) b.classList.add('sel');
+      if (String(y) === today.slice(0,4)) b.classList.add('today');
+      b.addEventListener('click', () => { calY = y; calView = 'month'; drawCal(); });
+      calGrid.appendChild(b);
     }
-  } catch (e) {}
+    return;
+  }
+  if (calView === 'month'){
+    calTitle.textContent = String(calY);
+    calGrid.className = 'months';
+    MONTHS.forEach((name, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = name.slice(0,3);
+      if (sel.slice(0,7) === calY + '-' + pad(i+1)) b.classList.add('sel');
+      if (today.slice(0,7) === calY + '-' + pad(i+1)) b.classList.add('today');
+      b.addEventListener('click', () => { calM = i; calView = 'day'; drawCal(); });
+      calGrid.appendChild(b);
+    });
+    return;
+  }
+  calTitle.textContent = MONTHS[calM] + ' ' + calY;
+  calGrid.className = 'days';
+  ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(d => {
+    const s = document.createElement('div');
+    s.className = 'dow';
+    s.textContent = d;
+    calGrid.appendChild(s);
+  });
+  const first = new Date(calY, calM, 1);
+  const startDow = first.getDay();
+  const daysIn = new Date(calY, calM + 1, 0).getDate();
+  const prevDays = new Date(calY, calM, 0).getDate();
+  for (let i = 0; i < 42; i++){
+    const b = document.createElement('button');
+    b.type = 'button';
+    let y = calY, m = calM, d = i - startDow + 1;
+    if (d < 1){
+      m -= 1; d = prevDays + d;
+      if (m < 0){ m = 11; y -= 1; }
+      b.classList.add('out');
+    } else if (d > daysIn){
+      d -= daysIn; m += 1;
+      if (m > 11){ m = 0; y += 1; }
+      b.classList.add('out');
+    }
+    const ymd = y + '-' + pad(m+1) + '-' + pad(d);
+    b.textContent = d;
+    if (ymd === sel) b.classList.add('sel');
+    if (ymd === today) b.classList.add('today');
+    b.addEventListener('click', () => applyDate(ymd, true));
+    calGrid.appendChild(b);
+  }
+}
+
+dateBtn.addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calEl.classList.contains('open')) closeCal();
+  else openCal();
+});
+todayDot.addEventListener('click', evt => {
+  evt.stopPropagation();
+  jumpToday();
+});
+document.getElementById('cal-prev').addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calView === 'year') calY -= 12;
+  else if (calView === 'month') calY -= 1;
+  else { calM -= 1; if (calM < 0){ calM = 11; calY -= 1; } }
+  drawCal();
+});
+document.getElementById('cal-next').addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calView === 'year') calY += 12;
+  else if (calView === 'month') calY += 1;
+  else { calM += 1; if (calM > 11){ calM = 0; calY += 1; } }
+  drawCal();
+});
+calTitle.addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calView === 'day') calView = 'month';
+  else if (calView === 'month') calView = 'year';
+  else calView = 'day';
+  drawCal();
+});
+document.addEventListener('click', evt => {
+  if (!document.getElementById('date-wrap').contains(evt.target)) closeCal();
+});
+
+document.getElementById('date').addEventListener('change', () => {
+  syncDateChrome();
+  if (LAST_PLACE) {
+    loadPlace(LAST_PLACE).catch(err => {
+      document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
+    });
+  }
+});
+
+(function boot(){
+  const place = readSavedPlace() || DEFAULT_PLACE;
   committedLabel = place.value || DEFAULT_PLACE.value;
   cityInput.value = committedLabel;
+  if (!dateEl.value) dateEl.value = todayInTz(place.tzid || 'UTC');
+  syncDateChrome();
   loadPlace(place).catch(err => {
     document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
   });
