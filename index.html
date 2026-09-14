@@ -124,9 +124,9 @@ p.sub{
   position:relative;
   width:100%;max-width:1120px;background:var(--surface);
   border:1px solid var(--border);border-radius:4px;
-  padding:24px 12px 16px;margin-top:20px;
+  padding:clamp(10px,2.2vw,24px) clamp(4px,1.4vw,12px) 16px;margin-top:20px;
 }
-svg{display:block;width:100%;overflow:visible}
+svg{display:block;width:100%;overflow:visible;min-height:320px}
 #legend{
   display:flex;flex-wrap:wrap;gap:8px 20px;
   margin-top:18px;justify-content:center;padding:0 8px;
@@ -244,9 +244,7 @@ svg{display:block;width:100%;overflow:visible}
       Latest: HebCal candle-lighting (18 minutes before sunset by default; 40 in Jerusalem, 30 in Haifa / Zikhron Yaakov).<br>
       After Shabbat (Yom Tov that starts Saturday night): the window starts at <b>tzet</b>; latest is HebCal’s post-Shabbat lighting time.</dd>
   </dl>
-  <p class="note">These times are approximations for learning and planning. 
-    Ask a local posek for halacha lemaaseh. 
-    Candle-lighting and zmanim follow HebCal</p>
+  <p class="note">These times are approximations for learning and planning. Ask a local posek for halacha lemaaseh. Candle-lighting and zmanim follow HebCal; location is a GeoNames city (population ≥ 1000).</p>
 </section>
 <div id="tt-hover"></div>
 
@@ -279,14 +277,14 @@ let ZMANIM_WINDOWS = [];
 let DATA = [];
 let DAY_START_MS = 0, DAY_END_MS = 0, DAY_SPAN_MS = 86400000;
 let NETZ_MS = 0, SHKIA_MS = 0, SHAAH_MS = 1;
-const Y_TOP = 90, Y_BOT = -94;
+const Y_TOP = 102, Y_BOT = -102;
 
 let selectedId = null;
 let lanePaths = {};
 let nowLineEl = null, nowLineHitEl = null;
 let iW_global = 0, iH_global = 0, xS_global = null, yS_global = null, g_global = null;
-const MARGIN = {top:62, right:54, bottom:74, left:62};
-const LANE_W = 5, LANE_GAP = 2, LANE_W_SEL = 9;
+let MARGIN = {top:76, right:28, bottom:70, left:52};
+let LANE_W = 2.75, LANE_GAP = 11, LANE_W_SEL = 4.5;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ttHover = document.getElementById('tt-hover');
 const ttPin = document.getElementById('tt-pin');
@@ -781,18 +779,40 @@ function updateNowLine(){
   if (nowLineHitEl){ nowLineHitEl.setAttribute('x1', x); nowLineHitEl.setAttribute('x2', x); }
 }
 
+function placeLabels(items, minGap){
+  const kept = [];
+  items.slice().sort((a,b) => a.x - b.x).forEach(it => {
+    if (kept.length && Math.abs(it.x - kept[kept.length-1].x) < minGap) return;
+    kept.push(it);
+  });
+  return kept;
+}
+
 function render(){
   const svg = document.getElementById('chart');
   svg.innerHTML = '';
   selectedId = null; lanePaths = {}; nowLineEl = nowLineHitEl = null;
-  const W = svg.clientWidth || 1096;
-  const H = 520;
+  const W = Math.max(280, svg.clientWidth || 1096);
+  const narrow = W < 700;
+  const compact = W < 420;
+  MARGIN = {
+    top: narrow ? 84 : 78,
+    right: compact ? 12 : 24,
+    bottom: narrow ? 58 : 68,
+    left: compact ? 34 : 48
+  };
+  LANE_W = compact ? 2 : 2.4;
+  LANE_GAP = compact ? 7 : 8;
+  LANE_W_SEL = compact ? 3.4 : 3.8;
+  const fs = compact ? 8 : (narrow ? 9 : 10);
+  const H = Math.max(340, Math.min(560, Math.round((window.innerHeight || 800) * (narrow ? 0.48 : 0.52))));
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  const iW = W - MARGIN.left - MARGIN.right;
-  const iH = H - MARGIN.top - MARGIN.bottom;
+  const iW = Math.max(120, W - MARGIN.left - MARGIN.right);
+  const iH = Math.max(180, H - MARGIN.top - MARGIN.bottom);
   iW_global = iW; iH_global = iH;
   const xS = scale(DAY_START_MS, DAY_END_MS, 0, iW);
   const yS = scale(Y_BOT, Y_TOP, iH, 0);
+  const clampY = y => Math.max(3, Math.min(iH - 3, y));
   xS_global = xS; yS_global = yS;
 
   const defs = el('defs', {}, svg);
@@ -803,7 +823,7 @@ function render(){
   el('stop', {offset:'0%', 'stop-color':'#8ab4d8'}, moonG);
   el('stop', {offset:'100%', 'stop-color':'#3a5570'}, moonG);
   const glow = el('filter', {id:'glow'}, defs);
-  el('feGaussianBlur', {stdDeviation:'2.2', result:'b'}, glow);
+  el('feGaussianBlur', {stdDeviation:'1.4', result:'b'}, glow);
   const merge = el('feMerge', {}, glow);
   el('feMergeNode', {in:'b'}, merge);
   el('feMergeNode', {in:'SourceGraphic'}, merge);
@@ -814,79 +834,116 @@ function render(){
   g_global = g;
 
   const chartBg = el('rect', {x:0, y:0, width:iW, height:iH, fill:'#0b1220', 'clip-path':'url(#chartClip)'}, g);
-  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke:'#c8d8f033', 'stroke-width':1, display:'none', 'pointer-events':'none'}, g);
+  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke:'#e8d8a077', 'stroke-width':1.5, display:'none', 'pointer-events':'none'}, g);
   function chartPos(evt){
     const svgRect = svg.getBoundingClientRect();
-    return (evt.clientX - svgRect.left) / svgRect.width * (iW + MARGIN.left + MARGIN.right) - MARGIN.left;
+    return (evt.clientX - svgRect.left) / svgRect.width * W - MARGIN.left;
+  }
+  const magnetPts = [];
+  if (Number.isFinite(ZMANIM_RAW.netz)) magnetPts.push({x: xS(ZMANIM_RAW.netz), ms: ZMANIM_RAW.netz});
+  if (Number.isFinite(ZMANIM_RAW.shkia)) magnetPts.push({x: xS(ZMANIM_RAW.shkia), ms: ZMANIM_RAW.shkia});
+  const MAGNET_PX = Math.max(12, Math.min(22, iW * 0.018));
+  function magnetize(cx){
+    let best = null, bestD = MAGNET_PX;
+    for (const p of magnetPts){
+      const d = Math.abs(cx - p.x);
+      if (d < bestD){ bestD = d; best = p; }
+    }
+    if (!best) return {x: cx, ms: DAY_START_MS + (cx / iW) * DAY_SPAN_MS, snap: false};
+    return {x: best.x, ms: best.ms, snap: true};
+  }
+  function setCursor(cx, snapped){
+    cursor.setAttribute('x1', cx);
+    cursor.setAttribute('x2', cx);
+    cursor.setAttribute('display', '');
+    cursor.setAttribute('stroke', snapped ? '#f5c842' : '#e8d8a077');
+    cursor.setAttribute('stroke-width', snapped ? '2.2' : '1.5');
   }
   chartBg.addEventListener('mousemove', evt => {
-    const cxUse = chartPos(evt);
-    if (cxUse < 0 || cxUse > iW){ cursor.setAttribute('display', 'none'); hideHover(); return; }
-    cursor.setAttribute('x1', cxUse); cursor.setAttribute('x2', cxUse); cursor.setAttribute('display', '');
-    showHoverTt(DAY_START_MS + (cxUse / iW) * DAY_SPAN_MS, evt.clientX, evt.clientY);
+    const raw = chartPos(evt);
+    if (raw < 0 || raw > iW){ cursor.setAttribute('display', 'none'); hideHover(); return; }
+    const m = magnetize(raw);
+    setCursor(m.x, m.snap);
+    showHoverTt(m.ms, evt.clientX, evt.clientY);
   });
   chartBg.addEventListener('mouseleave', () => { cursor.setAttribute('display', 'none'); hideHover(); });
   chartBg.addEventListener('click', evt => {
-    const cxUse = chartPos(evt);
-    if (cxUse < 0 || cxUse > iW) return;
+    const raw = chartPos(evt);
+    if (raw < 0 || raw > iW) return;
+    const m = magnetize(raw);
     deselectAll();
-    openPin(hoverBodyAt(DAY_START_MS + (cxUse / iW) * DAY_SPAN_MS));
+    openPin(hoverBodyAt(m.ms));
   });
   const zeroY = yS(0);
-  el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke:'#24344c', 'stroke-dasharray':'4 6'}, g);
+  el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke:'#3a4d68', 'stroke-width':2, 'stroke-dasharray':'5 6'}, g);
 
   const axL = el('g', {}, g);
-  for (let a = -90; a <= 90; a += 30){
+  const altStep = compact ? 45 : 30;
+  for (let a = -90; a <= 90; a += altStep){
     const y = yS(a);
-    el('line', {x1:-4, x2:0, y1:y, y2:y, stroke:'#4a6080'}, axL);
-    const t = el('text', {x:-8, y:y + 3, 'text-anchor':'end', fill:'#4a6080', 'font-size':9}, axL);
+    el('line', {x1:-6, x2:0, y1:y, y2:y, stroke:'#6a8098', 'stroke-width':2}, axL);
+    const t = el('text', {x:-8, y:y + 3, 'text-anchor':'end', fill:'#8aa0bc', 'font-size':fs}, axL);
     t.textContent = a + '°';
   }
 
-  const MARKERS = [
-    {key:'alotHashachar', abbr:'Alot'}, {key:'netz', abbr:'Netz'},
-    {key:'chatzot', abbr:'Chatzot'}, {key:'plagHamincha', abbr:'Plag'},
-    {key:'shkia', abbr:'Shkia'}, {key:'tzet', abbr:'Tzet'},
-  ];
+  const MARKERS = compact
+    ? [{key:'netz', abbr:'Netz'}, {key:'chatzot', abbr:'Chatzot'}, {key:'shkia', abbr:'Shkia'}]
+    : [
+        {key:'alotHashachar', abbr:'Alot'}, {key:'netz', abbr:'Netz'},
+        {key:'chatzot', abbr:'Chatzot'}, {key:'plagHamincha', abbr:'Plag'},
+        {key:'shkia', abbr:'Shkia'}, {key:'tzet', abbr:'Tzet'},
+      ];
+  const named = [];
   MARKERS.forEach(mk => {
     const ms = ZMANIM_RAW[mk.key];
     if (!Number.isFinite(ms)) return;
     const x = xS(ms);
-    el('line', {x1:x, x2:x, y1:0, y2:iH, stroke:'#ffffff18', 'stroke-width':1, 'stroke-dasharray':'3 6'}, g);
-    const t = el('text', {x:x, y:-14, 'text-anchor':'middle', fill:'#c8d8f055', 'font-size':8.5}, g);
-    t.textContent = mk.abbr;
+    if (x < -8 || x > iW + 8) return;
+    el('line', {x1:x, x2:x, y1:0, y2:iH, stroke:'#ffffff22', 'stroke-width':2, 'stroke-dasharray':'4 7'}, g);
+    named.push({x, abbr: mk.abbr});
+  });
+  placeLabels(named, compact ? 44 : 52).forEach((it, i) => {
+    const t = el('text', {
+      x:it.x, y: i % 2 ? -36 : -22,
+      'text-anchor':'middle', fill:'#c8d8f0aa', 'font-size':fs
+    }, g);
+    t.textContent = it.abbr;
   });
 
   const sunPts = [], moonPts = [];
-  for (let m = 0; m < 1440; m += 2){
+  for (let m = 0; m < 1440; m += 1){
     const d = DATA[m];
-    sunPts.push({x:xS(d.ms), y:yS(d.sunAlt)});
-    moonPts.push({x:xS(d.ms), y:yS(-Math.abs(d.moonAlt))});
+    sunPts.push({x:xS(d.ms), y:clampY(yS(d.sunAlt))});
+    moonPts.push({x:xS(d.ms), y:clampY(yS(d.moonAlt))});
   }
-  el('path', {fill:'none', stroke:'url(#sunG)', 'stroke-width':3, filter:'url(#glow)',
+  el('path', {fill:'none', stroke:'url(#sunG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'7 5', filter:'url(#glow)',
     'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(sunPts)}, g);
-  el('path', {fill:'none', stroke:'url(#moonG)', 'stroke-width':2, 'stroke-dasharray':'6 3',
-    opacity:.7, 'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(moonPts)}, g);
-  const mlt = el('text', {x:6, y:yS(-89), fill:'#8ab4d8', 'font-size':8.5, opacity:.6}, g);
-  mlt.textContent = '↓ Moon altitude (mirrored)';
+  el('path', {fill:'none', stroke:'url(#moonG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-dasharray':'7 5',
+    opacity:.8, 'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(moonPts)}, g);
+  if (!compact){
+    const mlt = el('text', {x:6, y:yS(-89), fill:'#8ab4d8', 'font-size':fs, opacity:.65}, g);
+    mlt.textContent = 'Moon altitude (same scale)';
+  }
 
   ZMANIM_WINDOWS.forEach(z => {
-    const offset = (LANE_W + LANE_GAP) * (z.lane + 1) * (z.side === 'sun' ? 1 : -1);
-    const sign = z.side === 'sun' ? -1 : 1;
+    const offset = LANE_GAP * (z.lane + 1);
+    const dir = z.side === 'sun' ? 1 : -1;
     const pts = [];
-    for (let m = 0; m < 1440; m += 2){
+    for (let m = 0; m < 1440; m += 1){
       const d = DATA[m];
       if (d.ms < z.start || d.ms > z.end) continue;
-      const baseY = z.side === 'sun' ? yS(d.sunAlt) : yS(-Math.abs(d.moonAlt));
-      pts.push({x:xS(d.ms), y:baseY + sign * offset});
+      const alt = z.side === 'sun' ? d.sunAlt : d.moonAlt;
+      pts.push({x:xS(d.ms), y:clampY(yS(alt) + dir * offset)});
     }
     if (pts.length < 2) return;
-    const path = el('path', {fill:'none', stroke:z.color, 'stroke-width':LANE_W, 'stroke-linecap':'round',
-      opacity:.9, 'clip-path':'url(#chartClip)', d:crPath(pts), cursor:'pointer', class:'zman-lane'}, g);
+    const path = el('path', {fill:'none', stroke:z.color, 'stroke-width':LANE_W, 'stroke-linecap':'round', 'stroke-linejoin':'round',
+      opacity:.95, 'clip-path':'url(#chartClip)', d:crPath(pts), cursor:'pointer', class:'zman-lane'}, g);
     lanePaths[z.id] = path;
     const lp = pts[pts.length - 1];
-    el('circle', {cx:lp.x, cy:lp.y, r:3.5, fill:z.color, opacity:.9}, g);
-    const hitPath = el('path', {fill:'none', stroke:'transparent', 'stroke-width':18,
+    if (lp.y > 2 && lp.y < iH - 2){
+      el('circle', {cx:lp.x, cy:lp.y, r:2.2, fill:z.color, opacity:.95, 'clip-path':'url(#chartClip)'}, g);
+    }
+    const hitPath = el('path', {fill:'none', stroke:'transparent', 'stroke-width':14,
       'clip-path':'url(#chartClip)', d:crPath(pts), cursor:'pointer'}, g);
     hitPath.addEventListener('click', evt => {
       evt.stopPropagation();
@@ -904,14 +961,14 @@ function render(){
     const nowX = xS(getNowMs());
     nowLineEl = el('line', {
       x1:nowX, x2:nowX, y1:0, y2:iH,
-      stroke:'#22d3a055', 'stroke-width':2, 'stroke-dasharray':'4 3',
+      stroke:'#22d3a0bb', 'stroke-width':1.75, 'stroke-dasharray':'5 4',
       'clip-path':'url(#chartClip)'
     }, g);
-    const nowLabel = el('text', {x:nowX, y:-5, 'text-anchor':'middle', fill:'#22d3a0aa', 'font-size':9}, g);
+    const nowLabel = el('text', {x:nowX + 6, y:16, 'text-anchor':'start', fill:'#22d3a0', 'font-size':fs}, g);
     nowLabel.textContent = 'Now';
     nowLineHitEl = el('line', {
       x1:nowX, x2:nowX, y1:0, y2:iH,
-      stroke:'transparent', 'stroke-width':16, cursor:'pointer',
+      stroke:'transparent', 'stroke-width':22, cursor:'pointer',
       'clip-path':'url(#chartClip)'
     }, g);
     nowLineHitEl.addEventListener('click', evt => {
@@ -927,32 +984,32 @@ function render(){
   }
 
   const axBot = el('g', {transform:`translate(0,${iH})`}, g);
-  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#1e2d45'}, axBot);
-  for (let h = 0; h < 24; h += 2){
+  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#3a4d68', 'stroke-width':2}, axBot);
+  const hourStep = compact ? 4 : (narrow ? 3 : 2);
+  for (let h = 0; h < 24; h += hourStep){
     const ms = zonedToUtcMs(DATE_STR, h, 0, 0, LOCATION.tzid);
     const x = xS(ms); if (x < 0 || x > iW) continue;
-    el('line', {x1:x, x2:x, y1:0, y2:5, stroke:'#4a6080'}, axBot);
-    const t = el('text', {x:x, y:18, 'text-anchor':'middle', fill:'#4a6080', 'font-size':9}, axBot);
-    t.textContent = pad(h) + ':00';
+    el('line', {x1:x, x2:x, y1:0, y2:6, stroke:'#6a8098', 'stroke-width':2}, axBot);
+    const t = el('text', {x:x, y:20, 'text-anchor':'middle', fill:'#8aa0bc', 'font-size':fs}, axBot);
+    t.textContent = pad(h);
   }
-  const xLB = el('text', {x:iW / 2, y:50, 'text-anchor':'middle', fill:'#4a6080', 'font-size':9, 'letter-spacing':'.1em'}, axBot);
-  xLB.textContent = 'LOCAL TIME (' + TZ_ABBR + (LOCATION.tzid ? ' · ' + LOCATION.tzid : '') + ')';
+  const xLB = el('text', {x:iW / 2, y: narrow ? 40 : 46, 'text-anchor':'middle', fill:'#6a8098', 'font-size':fs, 'letter-spacing':'.08em'}, axBot);
+  xLB.textContent = narrow ? TZ_ABBR : ('LOCAL TIME  ' + TZ_ABBR);
 
   const axTop = el('g', {}, g);
-  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#1e2d45'}, axTop);
-  if (Number.isFinite(ZMANIM_RAW.alotHashachar)){
-    const alotX = xS(ZMANIM_RAW.alotHashachar);
-    el('line', {x1:alotX, x2:alotX, y1:0, y2:-4, stroke:'#4a6080'}, axTop);
-    const alotT = el('text', {x:alotX, y:-6, 'text-anchor':'middle', fill:'#4a6080', 'font-size':8.5}, axTop);
-    alotT.textContent = 'Alot';
-  }
-  for (let i = 0; i <= 12; i++){
+  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#3a4d68', 'stroke-width':2}, axTop);
+  const shaStep = compact ? 2 : 1;
+  const shaLabs = [];
+  for (let i = 0; i <= 12; i += shaStep){
     const ms = NETZ_MS + i * SHAAH_MS;
     const x = xS(ms); if (x < 0 || x > iW) continue;
-    el('line', {x1:x, x2:x, y1:0, y2:-4, stroke:'#4a6080'}, axTop);
-    const t = el('text', {x:x, y:-7, 'text-anchor':'middle', fill:'#4a6080', 'font-size':8}, axTop);
-    t.textContent = String(i);
+    el('line', {x1:x, x2:x, y1:0, y2:-6, stroke:'#6a8098', 'stroke-width':2}, axTop);
+    shaLabs.push({x, abbr: String(i)});
   }
+  placeLabels(shaLabs, compact ? 22 : 18).forEach(it => {
+    const t = el('text', {x:it.x, y:-8, 'text-anchor':'middle', fill:'#8aa0bc', 'font-size':fs}, axTop);
+    t.textContent = it.abbr;
+  });
 
   const leg = document.getElementById('legend');
   leg.innerHTML = '';
@@ -967,7 +1024,7 @@ function render(){
     });
     leg.appendChild(nowItem);
   }
-  [{color:'#f5c842', label:'Sun altitude'}, {color:'#8ab4d8', label:'Moon altitude (mirrored)'}]
+  [{color:'#f5c842', label:'Sun altitude'}, {color:'#8ab4d8', label:'Moon altitude'}]
     .forEach(z => {
       const d = document.createElement('div'); d.className = 'li';
       d.innerHTML = `<div class="ls" style="background:${z.color}"></div><span>${z.label}</span>`;
@@ -1308,7 +1365,7 @@ function drawCal(){
       b.textContent = y;
       if (String(y) === sel.slice(0,4)) b.classList.add('sel');
       if (String(y) === today.slice(0,4)) b.classList.add('today');
-      b.addEventListener('click', () => { calY = y; calView = 'month'; drawCal(); });
+      b.addEventListener('click', evt => { evt.stopPropagation(); calY = y; calView = 'month'; drawCal(); });
       calGrid.appendChild(b);
     }
     return;
@@ -1322,7 +1379,7 @@ function drawCal(){
       b.textContent = name.slice(0,3);
       if (sel.slice(0,7) === calY + '-' + pad(i+1)) b.classList.add('sel');
       if (today.slice(0,7) === calY + '-' + pad(i+1)) b.classList.add('today');
-      b.addEventListener('click', () => { calM = i; calView = 'day'; drawCal(); });
+      b.addEventListener('click', evt => { evt.stopPropagation(); calM = i; calView = 'day'; drawCal(); });
       calGrid.appendChild(b);
     });
     return;
@@ -1356,7 +1413,7 @@ function drawCal(){
     b.textContent = d;
     if (ymd === sel) b.classList.add('sel');
     if (ymd === today) b.classList.add('today');
-    b.addEventListener('click', () => applyDate(ymd, true));
+    b.addEventListener('click', evt => { evt.stopPropagation(); applyDate(ymd, true); });
     calGrid.appendChild(b);
   }
 }
@@ -1391,8 +1448,12 @@ calTitle.addEventListener('click', evt => {
   else calView = 'day';
   drawCal();
 });
+calEl.addEventListener('click', evt => evt.stopPropagation());
 document.addEventListener('click', evt => {
-  if (!document.getElementById('date-wrap').contains(evt.target)) closeCal();
+  const wrap = document.getElementById('date-wrap');
+  const path = typeof evt.composedPath === 'function' ? evt.composedPath() : [];
+  if ((wrap && path.includes(wrap)) || (wrap && wrap.contains(evt.target))) return;
+  closeCal();
 });
 
 document.getElementById('date').addEventListener('change', () => {
