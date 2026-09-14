@@ -26,6 +26,12 @@ p.sub{
   margin-top:6px;font-size:.68rem;color:var(--muted);
   letter-spacing:.12em;text-transform:uppercase;text-align:center;
 }
+#month-line{
+  min-height:1.1em;margin-top:4px;text-align:center;
+  font-size:.72rem;color:var(--gold);letter-spacing:.08em;
+}
+#month-line:empty{display:none}
+#month-line .he{opacity:.7;font-size:.68rem;letter-spacing:0}
 #filters{
   display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;
   justify-content:center;width:min(640px,94vw);margin:16px auto 0;
@@ -162,11 +168,27 @@ svg{display:block;width:100%;overflow:visible}
 .tt-time-row{display:flex;justify-content:space-between;gap:12px}
 .tt-now{color:#22d3a0}
 .zman-lane{cursor:pointer}
+#about{
+  width:100%;max-width:1120px;margin:28px auto 0;
+  padding:20px 22px 24px;background:var(--surface);
+  border:1px solid var(--border);border-radius:4px;
+  font-size:.78rem;line-height:1.65;color:var(--text);
+}
+#about h2{
+  font-family:Georgia,'Times New Roman',serif;font-weight:400;
+  color:var(--gold);font-size:1rem;letter-spacing:.04em;margin-bottom:8px;
+}
+#about p{margin:0 0 10px;color:#9ab0c8}
+#about dl{display:grid;gap:10px}
+#about dt{color:var(--gold);font-size:.8rem}
+#about dd{margin:0;color:#c8d8f0}
+#about .note{margin-top:14px;color:var(--muted);font-size:.68rem;letter-spacing:.03em}
 </style>
 </head>
 <body>
 <h1>Where in the Zman? — <b id="cityTitle">Jerusalem</b></h1>
 <p class="sub" id="sub">Loading HebCal…</p>
+<p id="month-line" hidden></p>
 <div id="filters">
 <div id="city-wrap">
   <span id="city-icon">⌕</span>
@@ -196,6 +218,36 @@ svg{display:block;width:100%;overflow:visible}
   <svg id="chart"></svg>
   <div id="legend"></div>
 </div>
+<section id="about">
+  <h2>About these zmanim</h2>
+  <p>Each colored lane is an allowed window: earliest at one end, latest at the other. Times come from HebCal for the selected city and date. Hover a lane or click it for the clock times.</p>
+  <dl>
+    <dt>Tallit &amp; Tefillin</dt>
+    <dd>Earliest: <b>Misheyakir</b> (sun 11.5° below the horizon). Latest: <b>Sof Zman Tefillah GRA</b> (end of the morning Shacharit window).</dd>
+    <dt>Shema (MGA)</dt>
+    <dd>Earliest: <b>Alot HaShachar</b> (dawn, 16.1°). Latest: <b>Sof Zman Shema Magen Avraham</b> (end of the 3rd morning hour on the MGA clock).</dd>
+    <dt>Shema (GRA)</dt>
+    <dd>Earliest: <b>Netz</b> (sunrise). Latest: <b>Sof Zman Shema GRA</b> (end of the 3rd morning hour from sunrise to sunset).</dd>
+    <dt>Shacharit</dt>
+    <dd>Earliest: <b>Netz</b>. Latest: <b>Sof Zman Tefillah GRA</b> (end of the 4th morning hour).</dd>
+    <dt>Mincha Gedola</dt>
+    <dd>Earliest: <b>Mincha Gedola</b> (half an hour after midday). Latest: <b>Shkia</b> (sunset).</dd>
+    <dt>Mincha Ketana</dt>
+    <dd>Earliest: <b>Mincha Ketana</b> (9.5 halachic hours after sunrise). Latest: <b>Shkia</b>.</dd>
+    <dt>Plag HaMincha</dt>
+    <dd>Earliest: <b>Plag</b> (10.75 hours after sunrise). Latest: <b>Tzet</b> (nightfall). Lighting Shabbat early is only after Plag.</dd>
+    <dt>Maariv</dt>
+    <dd>Earliest: <b>Tzet</b> (~7.083°). Latest shown: <b>Tzet 72</b> (72 minutes after sunset, Rabbeinu Tam).</dd>
+    <dt>Shabbat &amp; Yom Tov candles</dt>
+    <dd>Shown only on Erev Shabbat or Erev Yom Tov.<br>
+      Earliest: <b>Plag HaMincha</b> (you may light early and accept Shabbat/Yom Tov).<br>
+      Latest: HebCal candle-lighting (18 minutes before sunset by default; 40 in Jerusalem, 30 in Haifa / Zikhron Yaakov).<br>
+      After Shabbat (Yom Tov that starts Saturday night): the window starts at <b>tzet</b>; latest is HebCal’s post-Shabbat lighting time.</dd>
+  </dl>
+  <p class="note">These times are approximations for learning and planning. 
+    Ask a local posek for halacha lemaaseh. 
+    Candle-lighting and zmanim follow HebCal</p>
+</section>
 <div id="tt-hover"></div>
 
 <script>
@@ -405,9 +457,80 @@ function selectedDateStr(tzid){
   return todayInTz(tzid || LOCATION.tzid || 'UTC');
 }
 
+function isMonthEvent(title, category){
+  const t = (title || '').toLowerCase();
+  const c = (category || '').toLowerCase();
+  return c === 'roshchodesh' || c === 'mevarchim' || c === 'molad'
+    || /rosh\s*chodesh/.test(t)
+    || /\bmolad\b/.test(t)
+    || /mevarchim/.test(t)
+    || /ha-?chodesh/.test(t)
+    || /kiddush\s*levanah/.test(t)
+    || /birkat?\s*ha-?levanah/.test(t);
+}
+
+function addCandleWindow(items){
+  const hit = (items || []).find(i =>
+    i.category === 'candles' || /^Candle lighting/i.test(i.title || '')
+  );
+  if (!hit) return;
+  const latest = parseIsoMs(hit.date);
+  if (!Number.isFinite(latest)) return;
+  const shkia = ZMANIM_RAW.shkia;
+  const afterDark = Number.isFinite(shkia) && latest > shkia + 2 * 60000;
+  const start = afterDark ? ZMANIM_RAW.tzet : ZMANIM_RAW.plagHamincha;
+  const end = latest;
+  if (!Number.isFinite(start) || end <= start) return;
+
+  const wd = new Date(zonedToUtcMs(DATE_STR, 12, 0, 0, LOCATION.tzid))
+    .toLocaleDateString('en-US', {weekday: 'short', timeZone: LOCATION.tzid});
+  const yomTov = (items || []).some(i => {
+    if (i.category !== 'holiday') return false;
+    if (i.subcat === 'major') return true;
+    return /Rosh Hashana|Yom Kippur|Sukkot|Pesach|Shavuot|Shmini Atzeret|Simchat Torah|Shemini Atzeret/i.test(i.title || '');
+  });
+
+  let label = 'Candle lighting', he = 'הדלקת נרות';
+  if (wd === 'Fri' && yomTov){ label = 'Shabbat & Yom Tov candles'; he = 'נרות שבת ויום טוב'; }
+  else if (wd === 'Fri'){ label = 'Shabbat candles'; he = 'נרות שבת'; }
+  else { label = 'Yom Tov candles'; he = 'נרות יום טוב'; }
+
+  ZMANIM_WINDOWS = ZMANIM_WINDOWS.filter(z => z.id !== 'candles');
+  ZMANIM_WINDOWS.push({
+    id: 'candles',
+    label,
+    he,
+    color: '#fde68a',
+    side: afterDark ? 'moon' : 'sun',
+    lane: 3,
+    start,
+    end
+  });
+}
+
+function monthEventBits(items, extraTitles){
+  const bits = [];
+  const seen = new Set();
+  function add(title, he){
+    const key = (title || '').toLowerCase();
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    bits.push({title, he: he || ''});
+  }
+  (items || []).forEach(i => {
+    if (isMonthEvent(i.title, i.category)) add(i.title, i.hebrew);
+  });
+  (extraTitles || []).forEach(t => {
+    if (isMonthEvent(t, '')) add(t, '');
+  });
+  return bits;
+}
+
 async function loadPlace(place){
   LAST_PLACE = place;
   document.getElementById('sub').textContent = 'Loading HebCal…';
+  const monthEl0 = document.getElementById('month-line');
+  if (monthEl0){ monthEl0.hidden = true; monthEl0.textContent = ''; }
   const tzGuess = place.tzid || LOCATION.tzid || 'UTC';
   DATE_STR = selectedDateStr(tzGuess);
 
@@ -477,23 +600,43 @@ async function loadPlace(place){
   const [Y,M,D] = DATE_STR.split('-').map(Number);
   const convUrl = `${HEBCAL}/converter?cfg=json&g2h=1&gy=${Y}&gm=${M}&gd=${D}`;
   const calUrl = `${HEBCAL}/hebcal?v=1&cfg=json&maj=on&min=on&mod=on&nx=on&ss=on&mf=on&c=on&start=${DATE_STR}&end=${DATE_STR}&${locQuery(place)}`;
-  let hebrew = '', events = [];
+  let hebrew = '', heEn = '', events = [], monthBits = [];
   try {
     const [conv, cal] = await Promise.all([
       fetch(convUrl).then(r => r.json()),
       fetch(calUrl).then(r => r.json())
     ]);
     hebrew = conv.hebrew || '';
+    if (conv.hd && conv.hm && conv.hy){
+      heEn = conv.hd + ' ' + String(conv.hm).replace(/'/g, '').toUpperCase() + ' ' + conv.hy;
+    }
     events = (conv.events || []).slice();
-    const extra = (cal.items || []).map(i => i.title).filter(Boolean);
-    extra.forEach(t => { if (!events.includes(t)) events.push(t); });
+    const items = cal.items || [];
+    items.forEach(i => { if (i.title && !events.includes(i.title)) events.push(i.title); });
+    monthBits = monthEventBits(items, events);
+    addCandleWindow(items);
   } catch (e) { /* subtitle still works without events */ }
 
   const weekday = new Date(zonedToUtcMs(DATE_STR, 12, 0, 0, LOCATION.tzid))
     .toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric', timeZone: LOCATION.tzid});
-  const evStr = events.filter(e => !/^Candle lighting/i.test(e) && !/^Havdalah/i.test(e) && e !== 'Fast begins' && e !== 'Fast ends').slice(0, 3).join(' · ');
+  const monthTitles = new Set(monthBits.map(b => b.title.toLowerCase()));
+  const evStr = events.filter(e =>
+    !/^Candle lighting/i.test(e) && !/^Havdalah/i.test(e) &&
+    e !== 'Fast begins' && e !== 'Fast ends' &&
+    !monthTitles.has(e.toLowerCase())
+  ).slice(0, 3).join(' · ');
   document.getElementById('sub').textContent =
-    [weekday, hebrew, evStr, LOCATION.name].filter(Boolean).join('  ·  ');
+    [weekday, heEn, hebrew, evStr, LOCATION.name].filter(Boolean).join('  ·  ');
+  const monthEl = document.getElementById('month-line');
+  if (monthBits.length){
+    monthEl.hidden = false;
+    monthEl.innerHTML = monthBits.map(b =>
+      b.he ? `${b.title} <span class="he">${b.he}</span>` : b.title
+    ).join('  ·  ');
+  } else {
+    monthEl.hidden = true;
+    monthEl.textContent = '';
+  }
   setCityHeading(LOCATION.name);
   try { localStorage.setItem('witz-place', JSON.stringify({
     id: LOCATION.geonameid || place.id,
@@ -531,8 +674,7 @@ function hoverBodyAt(ms){
   const d = DATA[m];
   if (!d) return '';
   const active = ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end);
-  let html = `<div class="tt-t">${msToLocalStr(d.ms)} ${TZ_ABBR}&nbsp;·&nbsp;${msToHalachic(d.ms)}</div>`
-    + `<div>☀ Sun: <b>${d.sunAlt.toFixed(1)}°</b>&nbsp;&nbsp;☽ Moon: <b>${d.moonAlt.toFixed(1)}°</b></div>`;
+  let html = `<div class="tt-t">${msToLocalStr(d.ms)} ${TZ_ABBR}&nbsp;·&nbsp;${msToHalachic(d.ms)}</div>`;
   if (active.length){
     html += `<div class="tt-sect">ACTIVE ZMANIM</div>`;
     active.forEach(z => {
@@ -551,7 +693,6 @@ function nowBody(){
   const d = DATA[m];
   const active = d ? ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end) : [];
   let html = `<div class="tt-t tt-now">▶ Now — ${wallStr} ${TZ_ABBR}</div>`;
-  if (d) html += `<div>☀ Sun: <b>${d.sunAlt.toFixed(1)}°</b>&nbsp;&nbsp;☽ Moon: <b>${d.moonAlt.toFixed(1)}°</b></div>`;
   if (active.length){
     html += `<div class="tt-sect">ACTIVE NOW</div>`;
     active.forEach(z => {
