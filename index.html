@@ -32,17 +32,25 @@ p.sub{
 #city{
   width:100%;background:#0d1829;color:var(--text);
   border:1px solid var(--border);border-radius:4px;
-  padding:10px 12px 10px 36px;font:inherit;font-size:.85rem;
+  padding:10px 40px 10px 36px;font:inherit;font-size:.85rem;
   outline:none;letter-spacing:.04em;
 }
 #city:focus{border-color:#4a7fa0;box-shadow:0 0 0 2px #4a7fa033}
 #city-icon{
-  position:absolute;left:12px;top:50%;transform:translateY(-50%);
+  position:absolute;left:12px;top:11px;
   color:var(--gold);font-size:.9rem;pointer-events:none;
 }
-#city-status{
-  position:absolute;right:10px;top:50%;transform:translateY(-50%);
-  font-size:.6rem;color:var(--muted);letter-spacing:.08em;pointer-events:none;
+#locate{
+  position:absolute;right:6px;top:6px;
+  width:28px;height:28px;border:0;border-radius:3px;
+  background:transparent;color:var(--gold);cursor:pointer;
+  font-size:.95rem;line-height:1;
+}
+#locate:hover{background:#13233a}
+#locate:disabled{opacity:.4;cursor:default}
+#city-hint{
+  margin-top:6px;text-align:center;font-size:.62rem;
+  color:var(--muted);letter-spacing:.06em;
 }
 #suggest{
   display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);
@@ -115,10 +123,11 @@ svg{display:block;width:100%;overflow:visible}
   <span id="city-icon">⌕</span>
   <input id="city" type="text" role="combobox" autocomplete="off"
     aria-autocomplete="list" aria-expanded="false" aria-controls="suggest"
-    placeholder="Type a city or US ZIP…" value="Jerusalem, Israel"/>
-  <span id="city-status">HEBCAL</span>
+    placeholder="Search cities…"/>
+  <button type="button" id="locate" title="Use my location" aria-label="Use my location">⌖</button>
   <div id="suggest" role="listbox"></div>
 </div>
+<div id="city-hint">Click the box to search · ⌖ uses your location</div>
 <div id="wrap">
   <div id="tt-pin" hidden></div>
   <svg id="chart"></svg>
@@ -127,11 +136,11 @@ svg{display:block;width:100%;overflow:visible}
 <div id="tt-hover"></div>
 
 <script>
-// HebCal REST APIs:
-//   GET https://www.hebcal.com/complete?q=          city / ZIP autocomplete
-//   GET https://www.hebcal.com/zmanim?cfg=json&…    daily zmanim
-//   GET https://www.hebcal.com/converter?cfg=json&  Hebrew date
-//   GET https://www.hebcal.com/hebcal?v=1&cfg=json  day events
+// HebCal location: geonameid from GeoNames cities1000 (P, pop >= 1000).
+// City list: cities.json  |  zmanim: /zmanim?geonameid=
+//   GET https://www.hebcal.com/zmanim?cfg=json&geonameid=
+//   GET https://www.hebcal.com/converter?cfg=json&
+//   GET https://www.hebcal.com/hebcal?v=1&cfg=json
 const HEBCAL = 'https://www.hebcal.com';
 const DEFAULT_PLACE = {id:281184, value:'Jerusalem, Israel', geo:'geoname', cc:'IL'};
 
@@ -317,14 +326,13 @@ function crPath(pts){
 }
 
 function locQuery(place){
-  if (place.geo === 'zip') return 'zip=' + encodeURIComponent(place.id);
-  return 'geonameid=' + encodeURIComponent(place.id);
+  return 'geonameid=' + encodeURIComponent(place.geonameid || place.id);
 }
 
 async function loadPlace(place){
-  document.getElementById('city-status').textContent = 'LOADING';
-  const tzGuess = LOCATION.tzid || 'UTC';
-  DATE_STR = todayInTz(place.tzid || tzGuess);
+  document.getElementById('sub').textContent = 'Loading HebCal…';
+  const tzGuess = place.tzid || LOCATION.tzid || 'UTC';
+  DATE_STR = todayInTz(tzGuess);
 
   const zUrl = `${HEBCAL}/zmanim?cfg=json&sec=1&ue=on&date=${DATE_STR}&${locQuery(place)}`;
   const zmanim = await fetch(zUrl).then(r => {
@@ -333,15 +341,15 @@ async function loadPlace(place){
   });
 
   const loc = zmanim.location || {};
+  const coordTitle = loc.title && /\d+°/.test(loc.title);
   LOCATION = {
-    name: loc.title || loc.city || place.value,
+    name: place.value || (!coordTitle && (loc.title || loc.city)) || place.value,
     lat: loc.latitude,
     lng: loc.longitude,
-    tzid: loc.tzid,
+    tzid: loc.tzid || place.tzid,
     geonameid: loc.geonameid || place.id,
     geo: loc.geo || place.geo,
-    cc: loc.cc || place.cc || '',
-    zip: loc.zip
+    cc: loc.cc || place.cc || ''
   };
   DATE_STR = (zmanim.date || DATE_STR).slice(0, 10);
 
@@ -408,8 +416,12 @@ async function loadPlace(place){
   document.getElementById('sub').textContent =
     [weekday, hebrew, evStr, LOCATION.name].filter(Boolean).join('  ·  ');
   setCityHeading(LOCATION.name);
-  document.getElementById('city-status').textContent = 'HEBCAL';
-  try { localStorage.setItem('witz-place', JSON.stringify(place)); } catch (e) {}
+  try { localStorage.setItem('witz-place', JSON.stringify({
+    id: LOCATION.geonameid || place.id,
+    geonameid: LOCATION.geonameid || place.id,
+    value: LOCATION.name,
+    geo: 'geoname'
+  })); } catch (e) {}
 
   render();
 }
@@ -720,8 +732,6 @@ function render(){
     t.textContent = String(i);
   }
 
-
-
   const leg = document.getElementById('legend');
   leg.innerHTML = '';
   const nowItem = document.createElement('div');
@@ -753,9 +763,94 @@ function render(){
   });
 }
 
+const CC_NAME = {AD:'Andorra',AE:'UAE',AF:'Afghanistan',AL:'Albania',AM:'Armenia',AR:'Argentina',AT:'Austria',AU:'Australia',AZ:'Azerbaijan',BA:'Bosnia',BE:'Belgium',BG:'Bulgaria',BR:'Brazil',BY:'Belarus',CA:'Canada',CH:'Switzerland',CL:'Chile',CN:'China',CO:'Colombia',CR:'Costa Rica',CY:'Cyprus',CZ:'Czechia',DE:'Germany',DK:'Denmark',DZ:'Algeria',EE:'Estonia',EG:'Egypt',ES:'Spain',ET:'Ethiopia',FI:'Finland',FR:'France',GB:'United Kingdom',GE:'Georgia',GR:'Greece',GT:'Guatemala',HK:'Hong Kong',HR:'Croatia',HU:'Hungary',ID:'Indonesia',IE:'Ireland',IL:'Israel',IN:'India',IR:'Iran',IQ:'Iraq',IS:'Iceland',IT:'Italy',JM:'Jamaica',JO:'Jordan',JP:'Japan',KE:'Kenya',KR:'South Korea',KW:'Kuwait',LB:'Lebanon',LT:'Lithuania',LU:'Luxembourg',LV:'Latvia',MA:'Morocco',MD:'Moldova',ME:'Montenegro',MK:'North Macedonia',MX:'Mexico',MY:'Malaysia',NG:'Nigeria',NL:'Netherlands',NO:'Norway',NZ:'New Zealand',PA:'Panama',PE:'Peru',PH:'Philippines',PK:'Pakistan',PL:'Poland',PR:'Puerto Rico',PS:'Palestine',PT:'Portugal',QA:'Qatar',RO:'Romania',RS:'Serbia',RU:'Russia',SA:'Saudi Arabia',SE:'Sweden',SG:'Singapore',SI:'Slovenia',SK:'Slovakia',TH:'Thailand',TR:'Turkey',TW:'Taiwan',UA:'Ukraine',US:'United States',UY:'Uruguay',UZ:'Uzbekistan',VE:'Venezuela',VN:'Vietnam',ZA:'South Africa',ZW:'Zimbabwe'};
+
 const cityInput = document.getElementById('city');
 const suggestEl = document.getElementById('suggest');
+const locateBtn = document.getElementById('locate');
 let acTimer = null, acItems = [], acIndex = -1;
+let CITY_ROWS = null, CITY_LOAD = null;
+let committedLabel = DEFAULT_PLACE.value;
+
+function countryLabel(cc){ return CC_NAME[cc] || cc || ''; }
+
+function cityLabel(row){
+  const name = row[1], cc = row[2];
+  const country = countryLabel(cc);
+  return country ? name + ', ' + country : name;
+}
+
+function ensureCities(){
+  if (CITY_ROWS) return Promise.resolve(CITY_ROWS);
+  if (!CITY_LOAD){
+    CITY_LOAD = fetch('cities.json').then(r => {
+      if (!r.ok) throw new Error('cities ' + r.status);
+      return r.json();
+    }).then(rows => { CITY_ROWS = rows; return rows; });
+  }
+  return CITY_LOAD;
+}
+
+function rowAscii(row){ return (row[6] || '').toLowerCase(); }
+
+function placeFromRow(row){
+  return {
+    id: row[0],
+    geonameid: row[0],
+    value: cityLabel(row),
+    geo: 'geoname',
+    cc: row[2],
+    lat: row[4],
+    lng: row[5]
+  };
+}
+
+function searchCities(q){
+  const needle = q.trim().toLowerCase();
+  if (needle.length < 2 || !CITY_ROWS) return [];
+  const starts = [], contains = [];
+  for (let i = 0; i < CITY_ROWS.length; i++){
+    const row = CITY_ROWS[i];
+    const name = row[1].toLowerCase();
+    const ascii = rowAscii(row);
+    const hit = name.startsWith(needle) || ascii.startsWith(needle);
+    const mid = !hit && (name.includes(needle) || ascii.includes(needle));
+    if (hit) starts.push(row);
+    else if (mid && contains.length < 40) contains.push(row);
+    if (starts.length >= 12) break;
+  }
+  const merged = starts.concat(contains);
+  merged.sort((a, b) => {
+    const as = a[1].toLowerCase().startsWith(needle) || rowAscii(a).startsWith(needle) ? 1 : 0;
+    const bs = b[1].toLowerCase().startsWith(needle) || rowAscii(b).startsWith(needle) ? 1 : 0;
+    if (bs !== as) return bs - as;
+    return (b[3] || 0) - (a[3] || 0);
+  });
+  const seen = new Set();
+  const out = [];
+  for (const row of merged){
+    const key = row[1].toLowerCase() + '|' + row[2];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(placeFromRow(row));
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function nearestCity(lat, lng){
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < CITY_ROWS.length; i++){
+    const row = CITY_ROWS[i];
+    const dlat = (row[4] - lat) * 111.32;
+    const dlng = (row[5] - lng) * 111.32 * Math.cos(lat * Math.PI / 180);
+    const d = dlat * dlat + dlng * dlng;
+    if (d < bestD){ bestD = d; best = row; }
+  }
+  const place = placeFromRow(best);
+  place.km = Math.sqrt(bestD);
+  return place;
+}
 
 function closeSuggest(){
   suggestEl.classList.remove('open');
@@ -764,64 +859,112 @@ function closeSuggest(){
   acItems = []; acIndex = -1;
 }
 
-function renderSuggest(items){
+function renderSuggest(items, emptyMsg){
   acItems = items; acIndex = items.length ? 0 : -1;
   suggestEl.innerHTML = '';
+  const locRow = document.createElement('button');
+  locRow.type = 'button';
+  locRow.innerHTML = '<span>⌖ Use my location</span><div class="meta">Nearest city</div>';
+  locRow.addEventListener('mousedown', evt => { evt.preventDefault(); useMyLocation(); });
+  suggestEl.appendChild(locRow);
   if (!items.length){
-    suggestEl.innerHTML = '<div class="empty">No HebCal locations match</div>';
-    suggestEl.classList.add('open');
-    cityInput.setAttribute('aria-expanded', 'true');
-    return;
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = emptyMsg || 'Type to search';
+    suggestEl.appendChild(empty);
+  } else {
+    items.forEach((it, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false');
+      b.innerHTML = `<span>${it.value}</span><div class="meta">${it.cc || ''}</div>`;
+      b.addEventListener('mousedown', evt => { evt.preventDefault(); pickPlace(it); });
+      suggestEl.appendChild(b);
+    });
   }
-  items.forEach((it, i) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.setAttribute('role', 'option');
-    b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false');
-    b.innerHTML = `<span>${it.flag ? it.flag + ' ' : ''}${it.value}</span>`
-      + (it.geo === 'zip' ? '<div class="meta">US ZIP</div>' : '');
-    b.addEventListener('mousedown', evt => { evt.preventDefault(); pickPlace(it); });
-    suggestEl.appendChild(b);
-  });
   suggestEl.classList.add('open');
   cityInput.setAttribute('aria-expanded', 'true');
 }
 
-async function queryComplete(q){
-  const url = HEBCAL + '/complete?q=' + encodeURIComponent(q);
-  const rows = await fetch(url).then(r => r.json());
-  return (rows || []).slice(0, 12);
-}
-
 function pickPlace(it){
+  committedLabel = it.value;
   cityInput.value = it.value;
   closeSuggest();
   loadPlace(it).catch(err => {
-    document.getElementById('city-status').textContent = 'ERROR';
     document.getElementById('sub').textContent = 'HebCal lookup failed — ' + err.message;
   });
 }
 
+function readGps(){
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation){
+      reject(new Error('Geolocation is not available'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({lat: pos.coords.latitude, lng: pos.coords.longitude}),
+      err => {
+        if (err.code === 1) reject(new Error('Location permission denied'));
+        else if (err.code === 2) reject(new Error('Location unavailable'));
+        else if (err.code === 3) reject(new Error('Location timed out'));
+        else reject(new Error(err.message || 'Location failed'));
+      },
+      {enableHighAccuracy: false, timeout: 10000, maximumAge: 300000}
+    );
+  });
+}
+
+async function useMyLocation(){
+  locateBtn.disabled = true;
+  document.getElementById('city-hint').textContent = 'Asking for location…';
+  try {
+    const {lat, lng} = await readGps();
+    const rows = await ensureCities();
+    if (!rows || !rows.length) throw new Error('City list not loaded');
+    const place = nearestCity(lat, lng);
+    document.getElementById('city-hint').textContent =
+      'Closest: ' + place.value + ' (' + place.km.toFixed(1) + ' km)';
+    pickPlace(place);
+  } catch (err) {
+    document.getElementById('city-hint').textContent = err.message + ' — type a city instead';
+    closeSuggest();
+  } finally {
+    locateBtn.disabled = false;
+  }
+}
+
+cityInput.addEventListener('focus', () => {
+  if (cityInput.value === committedLabel) cityInput.value = '';
+  ensureCities().then(() => {
+    if (cityInput.value.trim().length < 2) renderSuggest([], 'Type to search');
+  }).catch(() => renderSuggest([], 'City list failed to load'));
+});
+cityInput.addEventListener('blur', () => {
+  setTimeout(() => {
+    if (!cityInput.value.trim()) cityInput.value = committedLabel;
+  }, 150);
+});
 cityInput.addEventListener('input', () => {
   const q = cityInput.value.trim();
   clearTimeout(acTimer);
-  if (q.length < 2){ closeSuggest(); return; }
+  if (q.length < 2){
+    renderSuggest([], 'Type to search');
+    return;
+  }
   acTimer = setTimeout(() => {
-    queryComplete(q).then(renderSuggest).catch(() => {
-      suggestEl.innerHTML = '<div class="empty">Could not reach HebCal</div>';
-      suggestEl.classList.add('open');
-    });
-  }, 180);
+    ensureCities().then(() => {
+      const hits = searchCities(q);
+      renderSuggest(hits, hits.length ? '' : 'No cities match');
+    }).catch(() => renderSuggest([], 'City list failed to load'));
+  }, 120);
 });
-
 cityInput.addEventListener('keydown', evt => {
   if (!suggestEl.classList.contains('open')) return;
   if (evt.key === 'ArrowDown'){
     evt.preventDefault();
     acIndex = Math.min(acItems.length - 1, acIndex + 1);
     [...suggestEl.querySelectorAll('button')].forEach((b, i) => b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false'));
-    const sel = suggestEl.querySelector('button[aria-selected="true"]');
-    if (sel) sel.scrollIntoView({block:'nearest'});
   } else if (evt.key === 'ArrowUp'){
     evt.preventDefault();
     acIndex = Math.max(0, acIndex - 1);
@@ -833,7 +976,10 @@ cityInput.addEventListener('keydown', evt => {
     closeSuggest();
   }
 });
-
+locateBtn.addEventListener('click', evt => {
+  evt.preventDefault();
+  useMyLocation();
+});
 document.addEventListener('click', evt => {
   if (!document.getElementById('city-wrap').contains(evt.target)) closeSuggest();
 });
@@ -848,14 +994,22 @@ document.addEventListener('keydown', evt => {
   let place = DEFAULT_PLACE;
   try {
     const saved = JSON.parse(localStorage.getItem('witz-place') || 'null');
-    if (saved && saved.id) place = saved;
+    if (saved && (saved.geonameid || saved.id) && saved.geo !== 'pos' && saved.geo !== 'zip') {
+      place = {
+        id: saved.geonameid || saved.id,
+        geonameid: saved.geonameid || saved.id,
+        value: saved.value || DEFAULT_PLACE.value,
+        geo: 'geoname'
+      };
+    }
   } catch (e) {}
-  cityInput.value = place.value || 'Jerusalem, Israel';
+  committedLabel = place.value || DEFAULT_PLACE.value;
+  cityInput.value = committedLabel;
   loadPlace(place).catch(err => {
     document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
-    document.getElementById('city-status').textContent = 'ERROR';
   });
 })();
+
 </script>
 </body>
 </html>
