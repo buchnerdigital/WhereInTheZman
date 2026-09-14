@@ -212,7 +212,7 @@ svg{display:block;width:100%;overflow:visible;min-height:320px}
   </div>
 </div>
 </div>
-<div id="city-hint">Click the box to search · ⌖ uses your location</div>
+<div id="city-hint"></div>
 <div id="wrap">
   <div id="tt-pin" hidden></div>
   <svg id="chart"></svg>
@@ -1145,13 +1145,13 @@ function renderSuggest(items, emptyMsg){
   suggestEl.innerHTML = '';
   const locRow = document.createElement('button');
   locRow.type = 'button';
-  locRow.innerHTML = '<span>⌖ Use my location</span><div class="meta">Nearest city in the GeoNames list</div>';
+  locRow.innerHTML = '<span>⌖ Use my location</span><div class="meta">Nearest city in list</div>';
   locRow.addEventListener('mousedown', evt => { evt.preventDefault(); useMyLocation(); });
   suggestEl.appendChild(locRow);
   if (!items.length){
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = emptyMsg || 'Type 2+ letters to search 147,968 cities';
+    empty.textContent = emptyMsg || 'Type to search cities';
     suggestEl.appendChild(empty);
   } else {
     items.forEach((it, i) => {
@@ -1159,7 +1159,7 @@ function renderSuggest(items, emptyMsg){
       b.type = 'button';
       b.setAttribute('role', 'option');
       b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false');
-      b.innerHTML = `<span>${it.value}</span><div class="meta">${it.cc || ''} · geonameid ${it.geonameid}</div>`;
+      b.innerHTML = `<span>${it.value}</span><div class="meta">${it.cc || ''}</div>`;
       b.addEventListener('mousedown', evt => { evt.preventDefault(); pickPlace(it); });
       suggestEl.appendChild(b);
     });
@@ -1218,7 +1218,7 @@ async function useMyLocation(){
 cityInput.addEventListener('focus', () => {
   if (cityInput.value === committedLabel) cityInput.value = '';
   ensureCities().then(() => {
-    if (cityInput.value.trim().length < 2) renderSuggest([], 'Type 2+ letters to search 147,968 cities');
+    if (cityInput.value.trim().length < 2) renderSuggest([], 'Type to search cities');
   }).catch(() => renderSuggest([], 'City list failed to load'));
 });
 cityInput.addEventListener('blur', () => {
@@ -1230,7 +1230,7 @@ cityInput.addEventListener('input', () => {
   const q = cityInput.value.trim();
   clearTimeout(acTimer);
   if (q.length < 2){
-    renderSuggest([], 'Type 2+ letters to search 147,968 cities');
+    renderSuggest([], 'Type to search cities');
     return;
   }
   acTimer = setTimeout(() => {
