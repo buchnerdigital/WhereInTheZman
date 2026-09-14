@@ -4,11 +4,34 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Where in the Zman?</title>
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('witz-theme');
+    if (t !== 'light' && t !== 'dark') t = 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0b0f1a;--surface:#111827;--border:#1e2d45;
-  --text:#c8d8f0;--muted:#4a6080;--gold:#e8d8a0;
+:root, html[data-theme="dark"]{
+  --bg:#0b0f1a;--surface:#111827;--border:#2a3a52;
+  --text:#f4efe4;--muted:#a8b4c4;--gold:#e8d8a0;
+  --ink:#f4efe4;--paper:#151b24;--axis:#c5d0dc;
+  --hover:#1a2434;--sel:#243044;--tt:#111827f5;
+  --sun:#c9a227;--moon:#8ab4d8;--now:#22d3a0;
+  --grid:#2a3548;--horizon:#4a5a70;
+}
+html[data-theme="light"]{
+  --bg:#e8edf2;--surface:#f5f7fa;--border:#b7c2ce;
+  --text:#122033;--muted:#243447;--gold:#1f6f7a;
+  --ink:#122033;--paper:#f5f7fa;--axis:#3d4a5c;
+  --hover:#d7e0ea;--sel:#c5d4c8;--tt:#f5f7faf5;
+  --sun:#5c4a1e;--moon:#1f4a78;--now:#0f6b52;
+  --grid:#c5ced8;--horizon:#8a96a4;
 }
 body{
   background:var(--bg);color:var(--text);
@@ -43,24 +66,34 @@ p.sub{
   position:relative;flex:0 0 auto;display:flex;align-items:center;gap:6px;
 }
 #date{display:none}
+#topbar{
+  width:min(1120px,96vw);display:flex;justify-content:flex-end;margin-bottom:8px;
+}
+#theme-toggle{
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--border);border-radius:4px;
+  padding:6px 10px;font:inherit;font-size:.72rem;letter-spacing:.06em;
+  cursor:pointer;
+}
+#theme-toggle:hover{background:var(--hover)}
 #date-btn{
-  background:#0d1829;color:var(--text);
+  background:var(--surface);color:var(--text);
   border:1px solid var(--border);border-radius:4px;
   padding:10px 12px;font:inherit;font-size:.85rem;
   letter-spacing:.04em;cursor:pointer;min-width:148px;text-align:left;
 }
-#date-btn:hover,#date-btn[aria-expanded="true"]{border-color:#4a7fa0}
+#date-btn:hover,#date-btn[aria-expanded="true"]{border-color:var(--gold)}
 #today-dot{
   width:18px;height:18px;border-radius:50%;padding:0;
   border:2px solid var(--gold);background:transparent;cursor:pointer;
   flex-shrink:0;
 }
-#today-dot:hover{background:#e8d8a044}
+#today-dot:hover{background:color-mix(in srgb, var(--gold) 25%, transparent)}
 #today-dot.on{background:var(--gold)}
 #cal{
   display:none;position:absolute;right:0;top:calc(100% + 4px);
-  width:252px;background:#0a1220;border:1px solid #2a3f5f;border-radius:6px;
-  padding:10px;z-index:25;box-shadow:0 8px 28px #000a;
+  width:252px;background:var(--surface);border:1px solid var(--border);border-radius:6px;
+  padding:10px;z-index:25;box-shadow:0 8px 24px #0002;
 }
 #cal.open{display:block}
 #cal-head{
@@ -70,7 +103,7 @@ p.sub{
   background:none;border:0;color:var(--gold);cursor:pointer;font:inherit;padding:4px 6px;
 }
 #cal-title{flex:1;text-align:center;color:var(--gold);cursor:pointer;font-size:.78rem;letter-spacing:.06em}
-#cal-title:hover{color:#fff}
+#cal-title:hover{color:var(--ink)}
 #cal-grid{display:grid;gap:2px}
 #cal-grid.days{grid-template-columns:repeat(7,1fr)}
 #cal-grid.months,#cal-grid.years{grid-template-columns:repeat(3,1fr)}
@@ -79,17 +112,17 @@ p.sub{
   background:none;border:0;color:var(--text);cursor:pointer;font:inherit;
   font-size:.75rem;padding:7px 0;border-radius:4px;
 }
-#cal-grid button:hover{background:#13233a}
-#cal-grid button.out{color:#2a3f5f}
-#cal-grid button.sel{background:#1a3a55;color:var(--gold)}
+#cal-grid button:hover{background:var(--hover)}
+#cal-grid button.out{color:var(--horizon)}
+#cal-grid button.sel{background:var(--sel);color:var(--gold)}
 #cal-grid button.today{box-shadow:inset 0 0 0 1px var(--gold)}
 #city{
-  width:100%;background:#0d1829;color:var(--text);
+  width:100%;background:var(--surface);color:var(--text);
   border:1px solid var(--border);border-radius:4px;
   padding:10px 40px 10px 36px;font:inherit;font-size:.85rem;
   outline:none;letter-spacing:.04em;
 }
-#city:focus{border-color:#4a7fa0;box-shadow:0 0 0 2px #4a7fa033}
+#city:focus{border-color:var(--gold);box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 30%, transparent)}
 #city-icon{
   position:absolute;left:12px;top:11px;
   color:var(--gold);font-size:.9rem;pointer-events:none;
@@ -100,7 +133,7 @@ p.sub{
   background:transparent;color:var(--gold);cursor:pointer;
   font-size:.95rem;line-height:1;
 }
-#locate:hover{background:#13233a}
+#locate:hover{background:var(--hover)}
 #locate:disabled{opacity:.4;cursor:default}
 #city-hint{
   margin-top:6px;text-align:center;font-size:.62rem;
@@ -108,16 +141,16 @@ p.sub{
 }
 #suggest{
   display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);
-  background:#0a1220;border:1px solid #2a3f5f;border-radius:4px;
+  background:var(--surface);border:1px solid var(--border);border-radius:4px;
   max-height:240px;overflow:auto;z-index:20;
-  box-shadow:0 8px 28px #000a;
+  box-shadow:0 8px 24px #0002;
 }
 #suggest.open{display:block}
 #suggest button{
   display:block;width:100%;text-align:left;background:none;border:0;
   color:var(--text);font:inherit;font-size:.78rem;padding:8px 12px;cursor:pointer;
 }
-#suggest button[aria-selected="true"],#suggest button:hover{background:#13233a}
+#suggest button[aria-selected="true"],#suggest button:hover{background:var(--hover)}
 #suggest .meta{color:var(--muted);font-size:.65rem;letter-spacing:.04em}
 #suggest .empty{padding:10px 12px;color:var(--muted);font-size:.75rem}
 #wrap{
@@ -136,12 +169,12 @@ svg{display:block;width:100%;overflow:visible;min-height:320px}
   color:var(--text);cursor:pointer;padding:3px 6px;border-radius:3px;
   border:1px solid transparent;transition:border-color .15s;
 }
-.li:hover{border-color:#2a3f5f}
-.li.sel{border-color:#4a7fa0;background:#0d1829}
+.li:hover{border-color:var(--border)}
+.li.sel{border-color:var(--gold);background:var(--sel)}
 .ls{width:24px;height:4px;border-radius:2px;flex-shrink:0}
 #tt-hover{
   position:fixed;pointer-events:none;
-  background:#0a1220f0;border:1px solid #2a3f5f;
+  background:var(--tt);border:1px solid var(--border);
   border-radius:5px;padding:10px 13px;font-size:.68rem;
   line-height:1.7;color:var(--text);z-index:120;
   display:none;min-width:200px;max-width:280px;
@@ -150,7 +183,7 @@ svg{display:block;width:100%;overflow:visible;min-height:320px}
 #tt-pin{
   display:none;position:absolute;top:12px;right:12px;
   width:min(280px,calc(100% - 24px));
-  background:#0a1220f5;border:1px solid #2a3f5f;
+  background:var(--tt);border:1px solid var(--border);
   border-radius:6px;padding:12px 14px 12px;
   font-size:.68rem;line-height:1.75;color:var(--text);
   z-index:30;box-shadow:0 8px 28px #000a;
@@ -159,14 +192,14 @@ svg{display:block;width:100%;overflow:visible;min-height:320px}
 #tt-pin.open{display:block}
 #tt-pin .tt-close{
   position:absolute;top:6px;right:8px;
-  background:none;border:0;color:#8aa0bc;cursor:pointer;
+  background:none;border:0;color:var(--muted);cursor:pointer;
   font:inherit;font-size:1rem;line-height:1;padding:4px 6px;
 }
 #tt-pin .tt-close:hover{color:var(--gold)}
-.tt-t{color:#e8d8a0;font-size:.84rem;font-family:Georgia,serif;margin-bottom:3px;padding-right:18px}
-.tt-sect{color:#4a90d0;font-size:.6rem;letter-spacing:.1em;margin-top:6px;margin-bottom:1px}
+.tt-t{color:var(--gold);font-size:.84rem;font-family:Georgia,serif;margin-bottom:3px;padding-right:18px}
+.tt-sect{color:var(--gold);font-size:.6rem;letter-spacing:.1em;margin-top:6px;margin-bottom:1px}
 .tt-time-row{display:flex;justify-content:space-between;gap:12px}
-.tt-now{color:#22d3a0}
+.tt-now{color:var(--now)}
 .zman-lane{cursor:pointer}
 #about{
   width:100%;max-width:1120px;margin:28px auto 0;
@@ -178,14 +211,15 @@ svg{display:block;width:100%;overflow:visible;min-height:320px}
   font-family:Georgia,'Times New Roman',serif;font-weight:400;
   color:var(--gold);font-size:1rem;letter-spacing:.04em;margin-bottom:8px;
 }
-#about p{margin:0 0 10px;color:#9ab0c8}
+#about p{margin:0 0 10px;color:var(--muted)}
 #about dl{display:grid;gap:10px}
 #about dt{color:var(--gold);font-size:.8rem}
-#about dd{margin:0;color:#c8d8f0}
+#about dd{margin:0;color:var(--text)}
 #about .note{margin-top:14px;color:var(--muted);font-size:.68rem;letter-spacing:.03em}
 </style>
 </head>
 <body>
+<div id="topbar"><button type="button" id="theme-toggle" aria-pressed="false">Dark</button></div>
 <h1>Where in the Zman? — <b id="cityTitle">Jerusalem</b></h1>
 <p class="sub" id="sub">Loading HebCal…</p>
 <p id="month-line" hidden></p>
@@ -258,14 +292,14 @@ const HEBCAL = 'https://www.hebcal.com';
 const DEFAULT_PLACE = {id:281184, value:'Jerusalem, Israel', geo:'geoname', cc:'IL'};
 
 const WINDOW_DEFS = [
-  {id:'tallit',    label:'Tallit & Tefillin', he:'טלית ותפילין', color:'#a78bfa', startKey:'misheyakir',    endKey:'sofZmanShacharitGRA', side:'sun',  lane:0},
-  {id:'shema_mga', label:'Shema (MGA)',       he:'ק"ש מג"א',      color:'#38bdf8', startKey:'alotHashachar', endKey:'sofZmanShemaMGA',     side:'sun',  lane:1},
-  {id:'shema_gra', label:'Shema (GRA)',       he:'ק"ש גר"א',      color:'#2dd4bf', startKey:'netz',          endKey:'sofZmanShemaGRA',     side:'sun',  lane:2},
-  {id:'shacharit', label:'Shacharit',         he:'שחרית',          color:'#facc15', startKey:'netz',          endKey:'sofZmanShacharitGRA', side:'sun',  lane:3},
-  {id:'mincha_g',  label:'Mincha Gedola',     he:'מנחה גדולה',     color:'#fb923c', startKey:'minchaGedola',  endKey:'shkia',              side:'sun',  lane:0},
-  {id:'mincha_k',  label:'Mincha Ketana',     he:'מנחה קטנה',      color:'#f97316', startKey:'minchaKetana',  endKey:'shkia',              side:'sun',  lane:1},
-  {id:'plag',      label:'Plag HaMincha',     he:'פלג המנחה',      color:'#e879f9', startKey:'plagHamincha',  endKey:'tzet',               side:'sun',  lane:2},
-  {id:'maariv',    label:'Maariv',            he:'מעריב',           color:'#818cf8', startKey:'tzet',          endKey:'tzet72',             side:'moon', lane:0},
+  {id:'tallit',    label:'Tallit & Tefillin', he:'טלית ותפילין', color:'#7c3aed', startKey:'misheyakir',    endKey:'sofZmanShacharitGRA', side:'sun',  lane:0},
+  {id:'shema_mga', label:'Shema (MGA)',       he:'ק"ש מג"א',      color:'#059669', startKey:'alotHashachar', endKey:'sofZmanShemaMGA',     side:'sun',  lane:1},
+  {id:'shema_gra', label:'Shema (GRA)',       he:'ק"ש גר"א',      color:'#0f766e', startKey:'netz',          endKey:'sofZmanShemaGRA',     side:'sun',  lane:2},
+  {id:'shacharit', label:'Shacharit',         he:'שחרית',          color:'#be123c', startKey:'netz',          endKey:'sofZmanShacharitGRA', side:'sun',  lane:3},
+  {id:'mincha_g',  label:'Mincha Gedola',     he:'מנחה גדולה',     color:'#4d7c0f', startKey:'minchaGedola',  endKey:'shkia',              side:'sun',  lane:0},
+  {id:'mincha_k',  label:'Mincha Ketana',     he:'מנחה קטנה',      color:'#a21caf', startKey:'minchaKetana',  endKey:'shkia',              side:'sun',  lane:1},
+  {id:'plag',      label:'Plag HaMincha',     he:'פלג המנחה',      color:'#c026d3', startKey:'plagHamincha',  endKey:'tzet',               side:'sun',  lane:2},
+  {id:'maariv',    label:'Maariv',            he:'מעריב',           color:'#6d28d9', startKey:'tzet',          endKey:'tzet72',             side:'moon', lane:0},
 ];
 
 let LOCATION = {name:'Jerusalem, Israel', lat:31.76904, lng:35.21633, tzid:'Asia/Jerusalem', geonameid:281184, geo:'geoname', cc:'IL'};
@@ -498,7 +532,7 @@ function addCandleWindow(items){
     id: 'candles',
     label,
     he,
-    color: '#fde68a',
+    color: '#57534e',
     side: afterDark ? 'moon' : 'sun',
     lane: 3,
     start,
@@ -779,6 +813,25 @@ function updateNowLine(){
   if (nowLineHitEl){ nowLineHitEl.setAttribute('x1', x); nowLineHitEl.setAttribute('x2', x); }
 }
 
+function cssVar(name, fallback){
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+function chartTheme(){
+  return {
+    paper: cssVar('--paper', '#f5f7fa'),
+    axis: cssVar('--axis', '#3d4a5c'),
+    label: cssVar('--text', '#122033'),
+    muted: cssVar('--muted', '#243447'),
+    gold: cssVar('--gold', '#1f6f7a'),
+    sun: cssVar('--sun', '#5c4a1e'),
+    moon: cssVar('--moon', '#1f4a78'),
+    now: cssVar('--now', '#0f6b52'),
+    grid: cssVar('--grid', '#c5ced8'),
+    horizon: cssVar('--horizon', '#8a96a4')
+  };
+}
+
 function placeLabels(items, minGap){
   const kept = [];
   items.slice().sort((a,b) => a.x - b.x).forEach(it => {
@@ -791,6 +844,7 @@ function placeLabels(items, minGap){
 function render(){
   const svg = document.getElementById('chart');
   svg.innerHTML = '';
+  const th = chartTheme();
   selectedId = null; lanePaths = {}; nowLineEl = nowLineHitEl = null;
   const W = Math.max(280, svg.clientWidth || 1096);
   const narrow = W < 700;
@@ -816,12 +870,17 @@ function render(){
   xS_global = xS; yS_global = yS;
 
   const defs = el('defs', {}, svg);
-  const sunG = el('linearGradient', {id:'sunG', x1:'0', y1:'1', x2:'0', y2:'0'}, defs);
-  el('stop', {offset:'0%', 'stop-color':'#7a5a10'}, sunG);
-  el('stop', {offset:'100%', 'stop-color':'#f5c842'}, sunG);
-  const moonG = el('linearGradient', {id:'moonG', x1:'0', y1:'0', x2:'0', y2:'1'}, defs);
-  el('stop', {offset:'0%', 'stop-color':'#8ab4d8'}, moonG);
-  el('stop', {offset:'100%', 'stop-color':'#3a5570'}, moonG);
+  const sunG = el('linearGradient', {id:'sunG', gradientUnits:'userSpaceOnUse',
+    x1:0, y1:yS(Y_BOT), x2:0, y2:yS(Y_TOP)}, defs);
+  el('stop', {offset:'0%', 'stop-color':'#9a3412'}, sunG);
+  el('stop', {offset:'47%', 'stop-color':'#c2410c'}, sunG);
+  el('stop', {offset:'53%', 'stop-color':'#f59e0b'}, sunG);
+  el('stop', {offset:'100%', 'stop-color':'#facc15'}, sunG);
+  const moonG = el('linearGradient', {id:'moonG', gradientUnits:'userSpaceOnUse',
+    x1:0, y1:yS(Y_BOT), x2:0, y2:yS(Y_TOP)}, defs);
+  el('stop', {offset:'0%', 'stop-color':'#1e3a8a'}, moonG);
+  el('stop', {offset:'50%', 'stop-color':'#2563eb'}, moonG);
+  el('stop', {offset:'100%', 'stop-color':'#60a5fa'}, moonG);
   const glow = el('filter', {id:'glow'}, defs);
   el('feGaussianBlur', {stdDeviation:'1.4', result:'b'}, glow);
   const merge = el('feMerge', {}, glow);
@@ -833,8 +892,8 @@ function render(){
   const g = el('g', {transform:`translate(${MARGIN.left},${MARGIN.top})`}, svg);
   g_global = g;
 
-  const chartBg = el('rect', {x:0, y:0, width:iW, height:iH, fill:'#0b1220', 'clip-path':'url(#chartClip)'}, g);
-  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke:'#e8d8a077', 'stroke-width':1.5, display:'none', 'pointer-events':'none'}, g);
+  const chartBg = el('rect', {x:0, y:0, width:iW, height:iH, fill: th.paper, 'clip-path':'url(#chartClip)'}, g);
+  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke: th.gold, 'stroke-width':1.5, display:'none', 'pointer-events':'none'}, g);
   function chartPos(evt){
     const svgRect = svg.getBoundingClientRect();
     return (evt.clientX - svgRect.left) / svgRect.width * W - MARGIN.left;
@@ -856,7 +915,7 @@ function render(){
     cursor.setAttribute('x1', cx);
     cursor.setAttribute('x2', cx);
     cursor.setAttribute('display', '');
-    cursor.setAttribute('stroke', snapped ? '#f5c842' : '#e8d8a077');
+    cursor.setAttribute('stroke', snapped ? th.now : th.axis);
     cursor.setAttribute('stroke-width', snapped ? '2.2' : '1.5');
   }
   chartBg.addEventListener('mousemove', evt => {
@@ -875,14 +934,14 @@ function render(){
     openPin(hoverBodyAt(m.ms));
   });
   const zeroY = yS(0);
-  el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke:'#3a4d68', 'stroke-width':2, 'stroke-dasharray':'5 6'}, g);
+  el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke: th.horizon, 'stroke-width':1.25}, g);
 
   const axL = el('g', {}, g);
   const altStep = compact ? 45 : 30;
   for (let a = -90; a <= 90; a += altStep){
     const y = yS(a);
-    el('line', {x1:-6, x2:0, y1:y, y2:y, stroke:'#6a8098', 'stroke-width':2}, axL);
-    const t = el('text', {x:-8, y:y + 3, 'text-anchor':'end', fill:'#8aa0bc', 'font-size':fs}, axL);
+    el('line', {x1:-6, x2:0, y1:y, y2:y, stroke: th.axis, 'stroke-width':2}, axL);
+    const t = el('text', {x:-8, y:y + 3, 'text-anchor':'end', fill: th.label, 'font-size':fs}, axL);
     t.textContent = a + '°';
   }
 
@@ -899,13 +958,13 @@ function render(){
     if (!Number.isFinite(ms)) return;
     const x = xS(ms);
     if (x < -8 || x > iW + 8) return;
-    el('line', {x1:x, x2:x, y1:0, y2:iH, stroke:'#ffffff22', 'stroke-width':2, 'stroke-dasharray':'4 7'}, g);
+    el('line', {x1:x, x2:x, y1:0, y2:iH, stroke: th.grid, 'stroke-width':1}, g);
     named.push({x, abbr: mk.abbr});
   });
   placeLabels(named, compact ? 44 : 52).forEach((it, i) => {
     const t = el('text', {
       x:it.x, y: i % 2 ? -36 : -22,
-      'text-anchor':'middle', fill:'#c8d8f0aa', 'font-size':fs
+      'text-anchor':'middle', fill: th.label, 'font-size':fs
     }, g);
     t.textContent = it.abbr;
   });
@@ -916,12 +975,12 @@ function render(){
     sunPts.push({x:xS(d.ms), y:clampY(yS(d.sunAlt))});
     moonPts.push({x:xS(d.ms), y:clampY(yS(d.moonAlt))});
   }
-  el('path', {fill:'none', stroke:'url(#sunG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'7 5', filter:'url(#glow)',
+  el('path', {fill:'none', stroke:'url(#sunG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'12 7', filter:'url(#glow)',
     'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(sunPts)}, g);
-  el('path', {fill:'none', stroke:'url(#moonG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-dasharray':'7 5',
+  el('path', {fill:'none', stroke:'url(#moonG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-dasharray':'2 5',
     opacity:.8, 'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(moonPts)}, g);
   if (!compact){
-    const mlt = el('text', {x:6, y:yS(-89), fill:'#8ab4d8', 'font-size':fs, opacity:.65}, g);
+    const mlt = el('text', {x:6, y:yS(-89), fill: th.muted, 'font-size':fs, opacity:.65}, g);
     mlt.textContent = 'Moon altitude (same scale)';
   }
 
@@ -961,10 +1020,10 @@ function render(){
     const nowX = xS(getNowMs());
     nowLineEl = el('line', {
       x1:nowX, x2:nowX, y1:0, y2:iH,
-      stroke:'#22d3a0bb', 'stroke-width':1.75, 'stroke-dasharray':'5 4',
+      stroke: th.now, 'stroke-width':1.75,
       'clip-path':'url(#chartClip)'
     }, g);
-    const nowLabel = el('text', {x:nowX + 6, y:16, 'text-anchor':'start', fill:'#22d3a0', 'font-size':fs}, g);
+    const nowLabel = el('text', {x:nowX + 6, y:16, 'text-anchor':'start', fill: th.now, 'font-size':fs}, g);
     nowLabel.textContent = 'Now';
     nowLineHitEl = el('line', {
       x1:nowX, x2:nowX, y1:0, y2:iH,
@@ -984,30 +1043,30 @@ function render(){
   }
 
   const axBot = el('g', {transform:`translate(0,${iH})`}, g);
-  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#3a4d68', 'stroke-width':2}, axBot);
+  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke: th.horizon, 'stroke-width':2}, axBot);
   const hourStep = compact ? 4 : (narrow ? 3 : 2);
   for (let h = 0; h < 24; h += hourStep){
     const ms = zonedToUtcMs(DATE_STR, h, 0, 0, LOCATION.tzid);
     const x = xS(ms); if (x < 0 || x > iW) continue;
-    el('line', {x1:x, x2:x, y1:0, y2:6, stroke:'#6a8098', 'stroke-width':2}, axBot);
-    const t = el('text', {x:x, y:20, 'text-anchor':'middle', fill:'#8aa0bc', 'font-size':fs}, axBot);
+    el('line', {x1:x, x2:x, y1:0, y2:6, stroke: th.axis, 'stroke-width':2}, axBot);
+    const t = el('text', {x:x, y:20, 'text-anchor':'middle', fill: th.label, 'font-size':fs}, axBot);
     t.textContent = pad(h);
   }
-  const xLB = el('text', {x:iW / 2, y: narrow ? 40 : 46, 'text-anchor':'middle', fill:'#6a8098', 'font-size':fs, 'letter-spacing':'.08em'}, axBot);
+  const xLB = el('text', {x:iW / 2, y: narrow ? 40 : 46, 'text-anchor':'middle', fill: th.muted, 'font-size':fs, 'letter-spacing':'.08em'}, axBot);
   xLB.textContent = narrow ? TZ_ABBR : ('LOCAL TIME  ' + TZ_ABBR);
 
   const axTop = el('g', {}, g);
-  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#3a4d68', 'stroke-width':2}, axTop);
+  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke: th.horizon, 'stroke-width':2}, axTop);
   const shaStep = compact ? 2 : 1;
   const shaLabs = [];
   for (let i = 0; i <= 12; i += shaStep){
     const ms = NETZ_MS + i * SHAAH_MS;
     const x = xS(ms); if (x < 0 || x > iW) continue;
-    el('line', {x1:x, x2:x, y1:0, y2:-6, stroke:'#6a8098', 'stroke-width':2}, axTop);
+    el('line', {x1:x, x2:x, y1:0, y2:-6, stroke: th.axis, 'stroke-width':2}, axTop);
     shaLabs.push({x, abbr: String(i)});
   }
   placeLabels(shaLabs, compact ? 22 : 18).forEach(it => {
-    const t = el('text', {x:it.x, y:-8, 'text-anchor':'middle', fill:'#8aa0bc', 'font-size':fs}, axTop);
+    const t = el('text', {x:it.x, y:-8, 'text-anchor':'middle', fill: th.label, 'font-size':fs}, axTop);
     t.textContent = it.abbr;
   });
 
@@ -1024,7 +1083,7 @@ function render(){
     });
     leg.appendChild(nowItem);
   }
-  [{color:'#f5c842', label:'Sun altitude'}, {color:'#8ab4d8', label:'Moon altitude'}]
+  [{color:'#f59e0b', label:'Sun altitude'}, {color:'#2563eb', label:'Moon altitude'}]
     .forEach(z => {
       const d = document.createElement('div'); d.className = 'li';
       d.innerHTML = `<div class="ls" style="background:${z.color}"></div><span>${z.label}</span>`;
@@ -1464,6 +1523,27 @@ document.getElementById('date').addEventListener('change', () => {
     });
   }
 });
+
+
+function currentTheme(){
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function applyTheme(mode){
+  const next = mode === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('witz-theme', next); } catch (e) {}
+  const btn = document.getElementById('theme-toggle');
+  if (btn){
+    btn.textContent = next === 'dark' ? 'Light' : 'Dark';
+    btn.setAttribute('aria-pressed', next === 'dark' ? 'true' : 'false');
+    btn.setAttribute('aria-label', next === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+  if (DATA.length) render();
+}
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+applyTheme(currentTheme());
 
 (function boot(){
   const place = readSavedPlace() || DEFAULT_PLACE;
