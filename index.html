@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Where In The Zman — Jerusalem</title>
+<title>Where in the Zman?</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -59,6 +59,7 @@ p.sub{
 #suggest .meta{color:var(--muted);font-size:.65rem;letter-spacing:.04em}
 #suggest .empty{padding:10px 12px;color:var(--muted);font-size:.75rem}
 #wrap{
+  position:relative;
   width:100%;max-width:1120px;background:var(--surface);
   border:1px solid var(--border);border-radius:4px;
   padding:24px 12px 16px;margin-top:20px;
@@ -76,15 +77,31 @@ svg{display:block;width:100%;overflow:visible}
 .li:hover{border-color:#2a3f5f}
 .li.sel{border-color:#4a7fa0;background:#0d1829}
 .ls{width:24px;height:4px;border-radius:2px;flex-shrink:0}
-#tt{
+#tt-hover{
   position:fixed;pointer-events:none;
   background:#0a1220f0;border:1px solid #2a3f5f;
-  border-radius:5px;padding:11px 15px;font-size:.68rem;
-  line-height:1.8;color:var(--text);z-index:100;
-  display:none;min-width:220px;max-width:300px;
+  border-radius:5px;padding:10px 13px;font-size:.68rem;
+  line-height:1.7;color:var(--text);z-index:120;
+  display:none;min-width:200px;max-width:280px;
   box-shadow:0 4px 24px #000a;
 }
-.tt-t{color:#e8d8a0;font-size:.84rem;font-family:Georgia,serif;margin-bottom:3px}
+#tt-pin{
+  display:none;position:absolute;top:12px;right:12px;
+  width:min(280px,calc(100% - 24px));
+  background:#0a1220f5;border:1px solid #2a3f5f;
+  border-radius:6px;padding:12px 14px 12px;
+  font-size:.68rem;line-height:1.75;color:var(--text);
+  z-index:30;box-shadow:0 8px 28px #000a;
+  pointer-events:auto;
+}
+#tt-pin.open{display:block}
+#tt-pin .tt-close{
+  position:absolute;top:6px;right:8px;
+  background:none;border:0;color:#8aa0bc;cursor:pointer;
+  font:inherit;font-size:1rem;line-height:1;padding:4px 6px;
+}
+#tt-pin .tt-close:hover{color:var(--gold)}
+.tt-t{color:#e8d8a0;font-size:.84rem;font-family:Georgia,serif;margin-bottom:3px;padding-right:18px}
 .tt-sect{color:#4a90d0;font-size:.6rem;letter-spacing:.1em;margin-top:6px;margin-bottom:1px}
 .tt-time-row{display:flex;justify-content:space-between;gap:12px}
 .tt-now{color:#22d3a0}
@@ -92,7 +109,7 @@ svg{display:block;width:100%;overflow:visible}
 </style>
 </head>
 <body>
-<h1>Sun and Moon Clock — <b id="cityTitle">Jerusalem</b> Zmanim</h1>
+<h1>Where in the Zman? — <b id="cityTitle">Jerusalem</b></h1>
 <p class="sub" id="sub">Loading HebCal…</p>
 <div id="city-wrap">
   <span id="city-icon">⌕</span>
@@ -103,10 +120,11 @@ svg{display:block;width:100%;overflow:visible}
   <div id="suggest" role="listbox"></div>
 </div>
 <div id="wrap">
+  <div id="tt-pin" hidden></div>
   <svg id="chart"></svg>
   <div id="legend"></div>
 </div>
-<div id="tt"></div>
+<div id="tt-hover"></div>
 
 <script>
 // HebCal REST APIs:
@@ -145,8 +163,8 @@ let iW_global = 0, iH_global = 0, xS_global = null, yS_global = null, g_global =
 const MARGIN = {top:62, right:54, bottom:74, left:62};
 const LANE_W = 5, LANE_GAP = 2, LANE_W_SEL = 9;
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const tt = document.getElementById('tt');
-let ttPinned = false;
+const ttHover = document.getElementById('tt-hover');
+const ttPin = document.getElementById('tt-pin');
 
 function pad(n){ return String(n).padStart(2,'0'); }
 
@@ -389,94 +407,133 @@ async function loadPlace(place){
   const evStr = events.filter(e => !/^Candle lighting/i.test(e) && !/^Havdalah/i.test(e) && e !== 'Fast begins' && e !== 'Fast ends').slice(0, 3).join(' · ');
   document.getElementById('sub').textContent =
     [weekday, hebrew, evStr, LOCATION.name].filter(Boolean).join('  ·  ');
-  document.getElementById('cityTitle').textContent = (LOCATION.name || '').split(',')[0];
-  document.title = 'Where In The Zman — ' + LOCATION.name;
+  setCityHeading(LOCATION.name);
   document.getElementById('city-status').textContent = 'HEBCAL';
   try { localStorage.setItem('witz-place', JSON.stringify(place)); } catch (e) {}
 
   render();
 }
 
-function positionTt(clientX, clientY){
-  const vpW = window.innerWidth, vpH = window.innerHeight;
-  const ttW = tt.offsetWidth || 240, ttH = tt.offsetHeight || 120;
-  let lx = clientX + 16, ly = clientY - 12;
-  if (lx + ttW > vpW - 8) lx = clientX - ttW - 12;
-  if (ly + ttH > vpH - 8) ly = clientY - ttH - 12;
-  if (ly < 8) ly = 8;
-  tt.style.left = lx + 'px'; tt.style.top = ly + 'px';
+function setCityHeading(name){
+  const shortName = (name || 'Jerusalem').split(',')[0];
+  document.getElementById('cityTitle').textContent = shortName;
+  document.title = 'Where in the Zman?';
 }
 
-function showHoverTt(ms, clientX, clientY){
-  if (ttPinned) return;
-  const m = Math.max(0, Math.min(1439, Math.round((ms - DAY_START_MS) / 60000)));
-  const d = DATA[m];
-  if (!d) return;
-  const active = ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end);
-  let html = `<div class="tt-t">${msToLocalStr(d.ms)} ${TZ_ABBR}&nbsp;·&nbsp;${msToHalachic(d.ms)}</div>`
-    + `<div>☀ Sun: <b>${d.sunAlt.toFixed(1)}°</b>&nbsp;&nbsp;☽ Moon: <b>${d.moonAlt.toFixed(1)}°</b></div>`;
-  if (active.length){
-    html += `<div class="tt-sect">ACTIVE ZMANIM</div>`;
-    active.forEach(z => { html += `<div style="color:${z.color}">▸ ${z.label} · ${z.he}</div>`; });
-  } else {
-    html += `<div style="color:#4a6080;font-size:.63rem;margin-top:4px">No active zman</div>`;
-  }
-  tt.innerHTML = html; tt.style.display = 'block';
-  positionTt(clientX, clientY);
-}
-
-function showZmanTt(z, clientX, clientY){
+function zmanTimesHtml(z){
   const startGeo = msToLocalStr(z.start), endGeo = msToLocalStr(z.end);
   const startHal = msToHalachic(z.start), endHal = msToHalachic(z.end);
   const dMin = Math.round((z.end - z.start) / 60000);
   const dH = Math.floor(dMin / 60), dM = dMin % 60;
   const durStr = dH > 0 ? `${dH}h ${dM}m` : `${dM}m`;
-  tt.innerHTML = `<div class="tt-t" style="color:${z.color}">${z.label} &nbsp;·&nbsp; <span style="font-size:.7rem;color:#c8d8f0;">${z.he}</span></div>`
-    + `<div class="tt-sect">START</div>`
-    + `<div class="tt-time-row"><span>🕐 ${startGeo} ${TZ_ABBR}</span><span style="color:#a0c8a0">${startHal}</span></div>`
-    + `<div class="tt-sect">END</div>`
-    + `<div class="tt-time-row"><span>🕐 ${endGeo} ${TZ_ABBR}</span><span style="color:#a0c8a0">${endHal}</span></div>`
+  return `<div class="tt-t" style="color:${z.color}">${z.label} &nbsp;·&nbsp; <span style="font-size:.7rem;color:#c8d8f0;">${z.he}</span></div>`
+    + `<div class="tt-sect">EARLIEST</div>`
+    + `<div class="tt-time-row"><span>${startGeo} ${TZ_ABBR}</span><span style="color:#a0c8a0">${startHal}</span></div>`
+    + `<div class="tt-sect">LATEST</div>`
+    + `<div class="tt-time-row"><span>${endGeo} ${TZ_ABBR}</span><span style="color:#a0c8a0">${endHal}</span></div>`
     + `<div class="tt-sect">DURATION</div>`
     + `<div>${durStr}</div>`;
-  tt.style.display = 'block';
-  positionTt(clientX, clientY);
 }
 
-function showNowTt(clientX, clientY){
+function hoverBodyAt(ms){
+  const m = Math.max(0, Math.min(1439, Math.round((ms - DAY_START_MS) / 60000)));
+  const d = DATA[m];
+  if (!d) return '';
+  const active = ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end);
+  let html = `<div class="tt-t">${msToLocalStr(d.ms)} ${TZ_ABBR}&nbsp;·&nbsp;${msToHalachic(d.ms)}</div>`
+    + `<div>☀ Sun: <b>${d.sunAlt.toFixed(1)}°</b>&nbsp;&nbsp;☽ Moon: <b>${d.moonAlt.toFixed(1)}°</b></div>`;
+  if (active.length){
+    html += `<div class="tt-sect">ACTIVE ZMANIM</div>`;
+    active.forEach(z => {
+      html += `<div style="color:${z.color}">▸ ${z.label}<br><span style="color:#c8d8f0;opacity:.85">${msToLocalStr(z.start)}–${msToLocalStr(z.end)} ${TZ_ABBR}</span></div>`;
+    });
+  } else {
+    html += `<div style="color:#4a6080;font-size:.63rem;margin-top:4px">No active zman</div>`;
+  }
+  return html;
+}
+
+function nowBody(){
   const nowMs = getNowMs();
+  const wallStr = msToLocalStr(Date.now());
   const m = Math.max(0, Math.min(1439, Math.round((nowMs - DAY_START_MS) / 60000)));
   const d = DATA[m];
   const active = d ? ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end) : [];
-  const wallStr = msToLocalStr(Date.now());
-  let html = `<div class="tt-t tt-now">▶ Current Time — ${wallStr} ${TZ_ABBR}</div>`;
+  let html = `<div class="tt-t tt-now">▶ Now — ${wallStr} ${TZ_ABBR}</div>`;
   if (d) html += `<div>☀ Sun: <b>${d.sunAlt.toFixed(1)}°</b>&nbsp;&nbsp;☽ Moon: <b>${d.moonAlt.toFixed(1)}°</b></div>`;
   if (active.length){
     html += `<div class="tt-sect">ACTIVE NOW</div>`;
-    active.forEach(z => { html += `<div style="color:${z.color}">▸ ${z.label} · ${z.he}</div>`; });
+    active.forEach(z => {
+      html += `<div style="color:${z.color}">▸ ${z.label}<br><span style="color:#c8d8f0;opacity:.85">${msToLocalStr(z.start)}–${msToLocalStr(z.end)} ${TZ_ABBR}</span></div>`;
+    });
   }
-  tt.innerHTML = html; tt.style.display = 'block';
-  positionTt(clientX, clientY);
+  return html;
 }
 
-function hideTt(){ if (!ttPinned) tt.style.display = 'none'; }
-function dismissPin(){ ttPinned = false; tt.style.display = 'none'; deselectAll(); }
+function positionHover(clientX, clientY){
+  const vpW = window.innerWidth, vpH = window.innerHeight;
+  const ttW = ttHover.offsetWidth || 220, ttH = ttHover.offsetHeight || 110;
+  let lx = clientX + 16, ly = clientY - 12;
+  if (lx + ttW > vpW - 8) lx = clientX - ttW - 12;
+  if (ly + ttH > vpH - 8) ly = clientY - ttH - 12;
+  if (ly < 8) ly = 8;
+  ttHover.style.left = lx + 'px';
+  ttHover.style.top = ly + 'px';
+}
+
+function showHoverTt(ms, clientX, clientY){
+  const html = hoverBodyAt(ms);
+  if (!html){ ttHover.style.display = 'none'; return; }
+  ttHover.innerHTML = html;
+  ttHover.style.display = 'block';
+  positionHover(clientX, clientY);
+}
+
+function showHoverZman(z, clientX, clientY){
+  ttHover.innerHTML = zmanTimesHtml(z);
+  ttHover.style.display = 'block';
+  positionHover(clientX, clientY);
+}
+
+function showHoverNow(clientX, clientY){
+  ttHover.innerHTML = nowBody();
+  ttHover.style.display = 'block';
+  positionHover(clientX, clientY);
+}
+
+function hideHover(){ ttHover.style.display = 'none'; }
+
+function openPin(html){
+  ttPin.innerHTML = '<button type="button" class="tt-close" aria-label="Close">×</button>' + html;
+  ttPin.hidden = false;
+  ttPin.classList.add('open');
+  const btn = ttPin.querySelector('.tt-close');
+  if (btn) btn.addEventListener('click', evt => { evt.stopPropagation(); closePin(); });
+}
+
+function closePin(){
+  ttPin.classList.remove('open');
+  ttPin.hidden = true;
+  ttPin.innerHTML = '';
+  deselectAll();
+}
+
 function deselectAll(){
   selectedId = null;
   document.querySelectorAll('.li.sel').forEach(n => n.classList.remove('sel'));
   Object.values(lanePaths).forEach(p => { if (p) p.setAttribute('stroke-width', LANE_W); });
 }
 
-function selectLane(id, x, y){
+function selectLane(id){
   deselectAll();
   selectedId = id;
   const item = document.querySelector(`.li[data-id="${id}"]`);
   if (item) item.classList.add('sel');
   if (lanePaths[id]) lanePaths[id].setAttribute('stroke-width', LANE_W_SEL);
-  ttPinned = true;
-  if (id === 'now') showNowTt(x, y);
+  if (id === 'now') openPin(nowBody());
   else {
     const z = ZMANIM_WINDOWS.find(w => w.id === id);
-    if (z) showZmanTt(z, x, y);
+    if (z) openPin(zmanTimesHtml(z));
   }
 }
 
@@ -524,7 +581,25 @@ function render(){
   const g = el('g', {transform:`translate(${MARGIN.left},${MARGIN.top})`}, svg);
   g_global = g;
 
-  el('rect', {x:0, y:0, width:iW, height:iH, fill:'#0b1220', 'clip-path':'url(#chartClip)'}, g);
+  const chartBg = el('rect', {x:0, y:0, width:iW, height:iH, fill:'#0b1220', 'clip-path':'url(#chartClip)'}, g);
+  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke:'#c8d8f033', 'stroke-width':1, display:'none', 'pointer-events':'none'}, g);
+  function chartPos(evt){
+    const svgRect = svg.getBoundingClientRect();
+    return (evt.clientX - svgRect.left) / svgRect.width * (iW + MARGIN.left + MARGIN.right) - MARGIN.left;
+  }
+  chartBg.addEventListener('mousemove', evt => {
+    const cxUse = chartPos(evt);
+    if (cxUse < 0 || cxUse > iW){ cursor.setAttribute('display', 'none'); hideHover(); return; }
+    cursor.setAttribute('x1', cxUse); cursor.setAttribute('x2', cxUse); cursor.setAttribute('display', '');
+    showHoverTt(DAY_START_MS + (cxUse / iW) * DAY_SPAN_MS, evt.clientX, evt.clientY);
+  });
+  chartBg.addEventListener('mouseleave', () => { cursor.setAttribute('display', 'none'); hideHover(); });
+  chartBg.addEventListener('click', evt => {
+    const cxUse = chartPos(evt);
+    if (cxUse < 0 || cxUse > iW) return;
+    deselectAll();
+    openPin(hoverBodyAt(DAY_START_MS + (cxUse / iW) * DAY_SPAN_MS));
+  });
   const zeroY = yS(0);
   el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke:'#24344c', 'stroke-dasharray':'4 6'}, g);
 
@@ -557,9 +632,9 @@ function render(){
     moonPts.push({x:xS(d.ms), y:yS(-Math.abs(d.moonAlt))});
   }
   el('path', {fill:'none', stroke:'url(#sunG)', 'stroke-width':3, filter:'url(#glow)',
-    'clip-path':'url(#chartClip)', d:crPath(sunPts)}, g);
+    'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(sunPts)}, g);
   el('path', {fill:'none', stroke:'url(#moonG)', 'stroke-width':2, 'stroke-dasharray':'6 3',
-    opacity:.7, 'clip-path':'url(#chartClip)', d:crPath(moonPts)}, g);
+    opacity:.7, 'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(moonPts)}, g);
   const mlt = el('text', {x:6, y:yS(-89), fill:'#8ab4d8', 'font-size':8.5, opacity:.6}, g);
   mlt.textContent = '↓ Moon altitude (mirrored)';
 
@@ -583,13 +658,14 @@ function render(){
       'clip-path':'url(#chartClip)', d:crPath(pts), cursor:'pointer'}, g);
     hitPath.addEventListener('click', evt => {
       evt.stopPropagation();
-      if (selectedId === z.id){ deselectAll(); ttPinned = false; tt.style.display = 'none'; return; }
-      selectLane(z.id, evt.clientX, evt.clientY);
+      if (selectedId === z.id){ closePin(); return; }
+      selectLane(z.id);
     });
     hitPath.addEventListener('mousemove', evt => {
-      if (ttPinned && selectedId === z.id) return;
-      if (!ttPinned) showZmanTt(z, evt.clientX, evt.clientY);
+      evt.stopPropagation();
+      showHoverZman(z, evt.clientX, evt.clientY);
     });
+    hitPath.addEventListener('mouseleave', hideHover);
   });
 
   const nowX = xS(getNowMs());
@@ -607,13 +683,14 @@ function render(){
   }, g);
   nowLineHitEl.addEventListener('click', evt => {
     evt.stopPropagation();
-    if (selectedId === 'now'){ deselectAll(); ttPinned = false; tt.style.display = 'none'; return; }
-    selectLane('now', evt.clientX, evt.clientY);
+    if (selectedId === 'now'){ closePin(); return; }
+    selectLane('now');
   });
   nowLineHitEl.addEventListener('mousemove', evt => {
-    if (ttPinned && selectedId === 'now') return;
-    if (!ttPinned) showNowTt(evt.clientX, evt.clientY);
+    evt.stopPropagation();
+    showHoverNow(evt.clientX, evt.clientY);
   });
+  nowLineHitEl.addEventListener('mouseleave', hideHover);
 
   const axBot = el('g', {transform:`translate(0,${iH})`}, g);
   el('line', {x1:0, x2:iW, y1:0, y2:0, stroke:'#1e2d45'}, axBot);
@@ -643,18 +720,7 @@ function render(){
     t.textContent = String(i);
   }
 
-  const overlay = el('rect', {x:0, y:0, width:iW, height:iH, fill:'transparent'}, g);
-  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke:'#c8d8f033', 'stroke-width':1, display:'none'}, g);
-  overlay.addEventListener('mousemove', evt => {
-    const svgRect = svg.getBoundingClientRect();
-    const cx = evt.clientX - svgRect.left - MARGIN.left;
-    if (cx < 0 || cx > iW){ cursor.setAttribute('display', 'none'); hideTt(); return; }
-    cursor.setAttribute('x1', cx); cursor.setAttribute('x2', cx); cursor.setAttribute('display', '');
-    const ms = DAY_START_MS + (cx / iW) * DAY_SPAN_MS;
-    showHoverTt(ms, evt.clientX, evt.clientY);
-  });
-  overlay.addEventListener('mouseleave', () => { cursor.setAttribute('display', 'none'); hideTt(); });
-  overlay.addEventListener('click', () => dismissPin());
+
 
   const leg = document.getElementById('legend');
   leg.innerHTML = '';
@@ -662,9 +728,9 @@ function render(){
   nowItem.className = 'li'; nowItem.setAttribute('data-id', 'now');
   nowItem.innerHTML = '<div class="ls" style="background:#22d3a0;border:1px dashed #22d3a0"></div>'
     + '<span>Now <span style="opacity:.45;font-size:.6rem">current time</span></span>';
-  nowItem.addEventListener('click', evt => {
-    if (selectedId === 'now'){ deselectAll(); ttPinned = false; tt.style.display = 'none'; return; }
-    selectLane('now', evt.clientX, evt.clientY);
+  nowItem.addEventListener('click', () => {
+    if (selectedId === 'now'){ closePin(); return; }
+    selectLane('now');
   });
   leg.appendChild(nowItem);
   [{color:'#f5c842', label:'Sun altitude'}, {color:'#8ab4d8', label:'Moon altitude (mirrored)'}]
@@ -677,12 +743,12 @@ function render(){
     const d = document.createElement('div'); d.className = 'li'; d.setAttribute('data-id', z.id);
     d.innerHTML = `<div class="ls" style="background:${z.color}"></div>`
       + `<span>${z.label} <span style="opacity:.45;font-size:.6rem">${z.he}</span></span>`;
-    d.addEventListener('click', evt => {
-      if (selectedId === z.id){ deselectAll(); ttPinned = false; tt.style.display = 'none'; return; }
-      selectLane(z.id, evt.clientX, evt.clientY);
+    d.addEventListener('click', () => {
+      if (selectedId === z.id){ closePin(); return; }
+      selectLane(z.id);
     });
-    d.addEventListener('mouseover', evt => { if (!ttPinned) showZmanTt(z, evt.clientX, evt.clientY); });
-    d.addEventListener('mouseleave', () => { if (!ttPinned) tt.style.display = 'none'; });
+    d.addEventListener('mouseover', evt => showHoverZman(z, evt.clientX, evt.clientY));
+    d.addEventListener('mouseleave', hideHover);
     leg.appendChild(d);
   });
 }
@@ -775,7 +841,7 @@ document.addEventListener('click', evt => {
 window.addEventListener('resize', () => { if (DATA.length) render(); });
 setInterval(updateNowLine, 60000);
 document.addEventListener('keydown', evt => {
-  if (evt.key === 'Escape' && ttPinned){ ttPinned = false; tt.style.display = 'none'; deselectAll(); }
+  if (evt.key === 'Escape'){ hideHover(); closePin(); }
 });
 
 (function boot(){
