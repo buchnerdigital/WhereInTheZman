@@ -2,20 +2,22 @@
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root, html[data-theme="dark"]{
-  --bg:#0b0f1a;--surface:#111827;--border:#2a3a52;
-  --text:#f4efe4;--muted:#a8b4c4;--gold:#e8d8a0;
-  --ink:#f4efe4;--paper:#151b24;--axis:#c5d0dc;
-  --hover:#1a2434;--sel:#243044;--tt:#111827f5;
-  --sun:#c9a227;--moon:#8ab4d8;--now:#22d3a0;
-  --grid:#2a3548;--horizon:#4a5a70;
+  --violet:#5003C0;--magenta:#AB03A9;--pink:#FF467A;--yellow:#FFD51E;
+  --bg:#12061f;--surface:#1c0833;--border:#6a20d0;
+  --text:#fff6d6;--muted:#e0b7f0;--gold:#FFD51E;
+  --ink:#fff6d6;--paper:#160824;--axis:#f3d9ff;
+  --hover:#2d0d52;--sel:#3c1470;--tt:#1c0833f5;
+  --sun:#FFD51E;--moon:#FF467A;--now:#FF467A;
+  --grid:#3a1868;--horizon:#AB03A9;
 }
 html[data-theme="light"]{
-  --bg:#e8edf2;--surface:#f5f7fa;--border:#b7c2ce;
-  --text:#122033;--muted:#243447;--gold:#1f6f7a;
-  --ink:#122033;--paper:#f5f7fa;--axis:#3d4a5c;
-  --hover:#d7e0ea;--sel:#c5d4c8;--tt:#f5f7faf5;
-  --sun:#5c4a1e;--moon:#1f4a78;--now:#0f6b52;
-  --grid:#c5ced8;--horizon:#8a96a4;
+  --violet:#5003C0;--magenta:#AB03A9;--pink:#FF467A;--yellow:#FFD51E;
+  --bg:#f4ecff;--surface:#fffaf2;--border:#d4b4f5;
+  --text:#2a0860;--muted:#6a1a88;--gold:#5003C0;
+  --ink:#2a0860;--paper:#fffdf8;--axis:#5003C0;
+  --hover:#f6d6ef;--sel:#ffe7a8;--tt:#fffaf2f5;
+  --sun:#AB03A9;--moon:#5003C0;--now:#FF467A;
+  --grid:#ead6fa;--horizon:#AB03A9;
 }
 body{
   background:var(--bg);color:var(--text);
@@ -172,8 +174,8 @@ svg{display:block;width:100%;height:auto;overflow:visible;min-height:min(62vh,88
   font:inherit;font-size:1rem;line-height:1;padding:4px 6px;
 }
 #tt-pin .tt-close:hover{color:var(--gold)}
-.tt-t{color:var(--gold);font-size:.84rem;font-family:Georgia,serif;margin-bottom:3px;padding-right:18px}
-.tt-sect{color:var(--gold);font-size:.6rem;letter-spacing:.1em;margin-top:6px;margin-bottom:1px}
+.tt-t{color:var(--gold);font-size:.92rem;font-family:Georgia,serif;margin-bottom:3px;padding-right:18px}
+.tt-sect{color:var(--gold);font-size:.72rem;letter-spacing:.1em;margin-top:6px;margin-bottom:1px}
 .tt-time-row{display:flex;justify-content:space-between;gap:12px}
 .tt-now{color:var(--now)}
 .zman-lane{cursor:pointer}
