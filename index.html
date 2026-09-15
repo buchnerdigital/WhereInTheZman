@@ -172,6 +172,10 @@ svg{display:block;width:100%;overflow:visible;min-height:320px}
 .li:hover{border-color:var(--border)}
 .li.sel{border-color:var(--gold);background:var(--sel)}
 .ls{width:24px;height:4px;border-radius:2px;flex-shrink:0}
+@media (pointer: coarse){
+  #tt-hover{display:none !important}
+  .zman-lane{pointer-events:none}
+}
 #tt-hover{
   position:fixed;pointer-events:none;
   background:var(--tt);border:1px solid var(--border);
@@ -322,6 +326,8 @@ let LANE_W = 2.75, LANE_GAP = 11, LANE_W_SEL = 4.5;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ttHover = document.getElementById('tt-hover');
 const ttPin = document.getElementById('tt-pin');
+const IS_COARSE = window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
+let scrubX = null;
 
 function pad(n){ return String(n).padStart(2,'0'); }
 
@@ -746,6 +752,7 @@ function positionHover(clientX, clientY){
 }
 
 function showHoverTt(ms, clientX, clientY){
+  if (IS_COARSE) return;
   const html = hoverBodyAt(ms);
   if (!html){ ttHover.style.display = 'none'; return; }
   ttHover.innerHTML = html;
@@ -754,12 +761,14 @@ function showHoverTt(ms, clientX, clientY){
 }
 
 function showHoverZman(z, clientX, clientY){
+  if (IS_COARSE) return;
   ttHover.innerHTML = zmanTimesHtml(z);
   ttHover.style.display = 'block';
   positionHover(clientX, clientY);
 }
 
 function showHoverNow(clientX, clientY){
+  if (IS_COARSE) return;
   ttHover.innerHTML = nowBody();
   ttHover.style.display = 'block';
   positionHover(clientX, clientY);
@@ -918,21 +927,68 @@ function render(){
     cursor.setAttribute('stroke', snapped ? th.now : th.axis);
     cursor.setAttribute('stroke-width', snapped ? '2.2' : '1.5');
   }
-  chartBg.addEventListener('mousemove', evt => {
-    const raw = chartPos(evt);
-    if (raw < 0 || raw > iW){ cursor.setAttribute('display', 'none'); hideHover(); return; }
-    const m = magnetize(raw);
+  function applyScrub(raw, pin){
+    const cx = Math.max(0, Math.min(iW, raw));
+    const m = magnetize(cx);
+    scrubX = m.x;
     setCursor(m.x, m.snap);
-    showHoverTt(m.ms, evt.clientX, evt.clientY);
-  });
-  chartBg.addEventListener('mouseleave', () => { cursor.setAttribute('display', 'none'); hideHover(); });
-  chartBg.addEventListener('click', evt => {
-    const raw = chartPos(evt);
-    if (raw < 0 || raw > iW) return;
-    const m = magnetize(raw);
-    deselectAll();
-    openPin(hoverBodyAt(m.ms));
-  });
+    hideHover();
+    if (pin){
+      deselectAll();
+      openPin(hoverBodyAt(m.ms));
+    }
+  }
+  let dragHit = null, scrubHandle = null;
+  if (IS_COARSE){
+    const startX = Number.isFinite(scrubX) ? scrubX : (isViewingToday() ? xS(getNowMs()) : iW / 2);
+    applyScrub(startX, false);
+    dragHit = el('rect', {
+      x:0, y:0, width:iW, height:iH, fill:'transparent',
+      style:'touch-action:none;cursor:ew-resize'
+    }, g);
+    let dragging = false;
+    dragHit.addEventListener('pointerdown', evt => {
+      evt.preventDefault();
+      dragging = true;
+      try { dragHit.setPointerCapture(evt.pointerId); } catch (e) {}
+      applyScrub(chartPos(evt), true);
+    });
+    dragHit.addEventListener('pointermove', evt => {
+      if (!dragging) return;
+      evt.preventDefault();
+      applyScrub(chartPos(evt), true);
+    });
+    const endDrag = () => { dragging = false; };
+    dragHit.addEventListener('pointerup', endDrag);
+    dragHit.addEventListener('pointercancel', endDrag);
+    scrubHandle = el('circle', {
+      cx: Number.isFinite(scrubX) ? scrubX : startX,
+      cy: iH, r: 11, fill: th.gold, stroke: th.paper, 'stroke-width':2,
+      'pointer-events':'none'
+    }, g);
+    const origSet = setCursor;
+    setCursor = function(cx, snapped){
+      origSet(cx, snapped);
+      if (scrubHandle) scrubHandle.setAttribute('cx', cx);
+    };
+    setCursor(Number.isFinite(scrubX) ? scrubX : startX, false);
+  } else {
+    chartBg.addEventListener('mousemove', evt => {
+      const raw = chartPos(evt);
+      if (raw < 0 || raw > iW){ cursor.setAttribute('display', 'none'); hideHover(); return; }
+      const m = magnetize(raw);
+      setCursor(m.x, m.snap);
+      showHoverTt(m.ms, evt.clientX, evt.clientY);
+    });
+    chartBg.addEventListener('mouseleave', () => { cursor.setAttribute('display', 'none'); hideHover(); });
+    chartBg.addEventListener('click', evt => {
+      const raw = chartPos(evt);
+      if (raw < 0 || raw > iW) return;
+      const m = magnetize(raw);
+      deselectAll();
+      openPin(hoverBodyAt(m.ms));
+    });
+  }
   const zeroY = yS(0);
   el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke: th.horizon, 'stroke-width':1.25}, g);
 
@@ -1040,6 +1096,11 @@ function render(){
       showHoverNow(evt.clientX, evt.clientY);
     });
     nowLineHitEl.addEventListener('mouseleave', hideHover);
+  }
+  if (IS_COARSE){
+    if (cursor && cursor.parentNode) g.appendChild(cursor);
+    if (dragHit) g.appendChild(dragHit);
+    if (scrubHandle) g.appendChild(scrubHandle);
   }
 
   const axBot = el('g', {transform:`translate(0,${iH})`}, g);
@@ -1328,6 +1389,13 @@ window.addEventListener('resize', () => { if (DATA.length) render(); });
 setInterval(updateNowLine, 60000);
 document.addEventListener('keydown', evt => {
   if (evt.key === 'Escape'){ hideHover(); closePin(); }
+});
+document.addEventListener('pointerdown', evt => {
+  if (!IS_COARSE) return;
+  if (ttPin.contains(evt.target)) return;
+  if (evt.target.closest('#wrap')) return;
+  hideHover();
+  closePin();
 });
 
 function readSavedPlace(){
