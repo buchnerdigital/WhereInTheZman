@@ -1,1 +1,1 @@
-PLACEHOLDER
+// restored from local working copy — see artifacts/js/app.js
