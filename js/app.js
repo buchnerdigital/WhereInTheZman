@@ -1,0 +1,1286 @@
+// Where in the Zman? — HebCal fetch, zman windows, chart, city search, date picker.
+// Loaded from index.html as js/app.js
+// HebCal location: geonameid from GeoNames cities1000 (P, pop >= 1000).
+// City list: cities.json  |  zmanim: /zmanim?geonameid=
+//   GET https://www.hebcal.com/zmanim?cfg=json&geonameid=
+//   GET https://www.hebcal.com/converter?cfg=json&
+//   GET https://www.hebcal.com/hebcal?v=1&cfg=json
+const HEBCAL = 'https://www.hebcal.com';
+const DEFAULT_PLACE = {id:281184, value:'Jerusalem, Israel', geo:'geoname', cc:'IL'};
+
+const WINDOW_DEFS = [
+  {id:'tallit',    label:'Tallit & Tefillin', he:'טלית ותפילין', color:'#7c3aed', startKey:'misheyakir',    endKey:'sofZmanShacharitGRA', side:'sun',  lane:0},
+  {id:'shema_mga', label:'Shema (MGA)',       he:'ק"ש מג"א',      color:'#059669', startKey:'alotHashachar', endKey:'sofZmanShemaMGA',     side:'sun',  lane:1},
+  {id:'shema_gra', label:'Shema (GRA)',       he:'ק"ש גר"א',      color:'#0f766e', startKey:'netz',          endKey:'sofZmanShemaGRA',     side:'sun',  lane:2},
+  {id:'shacharit', label:'Shacharit',         he:'שחרית',          color:'#be123c', startKey:'netz',          endKey:'sofZmanShacharitGRA', side:'sun',  lane:3},
+  {id:'mincha_g',  label:'Mincha Gedola',     he:'מנחה גדולה',     color:'#4d7c0f', startKey:'minchaGedola',  endKey:'shkia',              side:'sun',  lane:0},
+  {id:'mincha_k',  label:'Mincha Ketana',     he:'מנחה קטנה',      color:'#a21caf', startKey:'minchaKetana',  endKey:'shkia',              side:'sun',  lane:1},
+  {id:'plag',      label:'Plag HaMincha',     he:'פלג המנחה',      color:'#c026d3', startKey:'plagHamincha',  endKey:'tzet',               side:'sun',  lane:2},
+  {id:'maariv',    label:'Maariv',            he:'מעריב',           color:'#6d28d9', startKey:'tzet',          endKey:'tzet72',             side:'moon', lane:0},
+];
+
+let LOCATION = {name:'Jerusalem, Israel', lat:31.76904, lng:35.21633, tzid:'Asia/Jerusalem', geonameid:281184, geo:'geoname', cc:'IL'};
+let DATE_STR = '2026-09-14';
+let LAST_PLACE = null;
+let TZ_ABBR = 'IDT';
+let ZMANIM_RAW = {};
+let ZMANIM_WINDOWS = [];
+let DATA = [];
+let DAY_START_MS = 0, DAY_END_MS = 0, DAY_SPAN_MS = 86400000;
+let NETZ_MS = 0, SHKIA_MS = 0, SHAAH_MS = 1;
+const Y_TOP = 102, Y_BOT = -102;
+
+let selectedId = null;
+let lanePaths = {};
+let nowLineEl = null, nowLineHitEl = null;
+let iW_global = 0, iH_global = 0, xS_global = null, yS_global = null, g_global = null;
+let MARGIN = {top:76, right:28, bottom:70, left:52};
+let LANE_W = 2.75, LANE_GAP = 11, LANE_W_SEL = 4.5;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ttHover = document.getElementById('tt-hover');
+const ttPin = document.getElementById('tt-pin');
+const IS_COARSE = window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
+let scrubX = null;
+
+// --- clock / timezone ----------------------------------------------------
+function pad(n){ return String(n).padStart(2,'0'); }
+
+function tzParts(ms, tzid){
+  const f = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tzid, hour12: false,
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit',
+    timeZoneName:'short'
+  });
+  const p = {};
+  for (const x of f.formatToParts(new Date(ms))) if (x.type !== 'literal') p[x.type] = x.value;
+  return {
+    y:+p.year, mo:+p.month, d:+p.day,
+    h:(+p.hour === 24 ? 0 : +p.hour), mi:+p.minute, s:+p.second,
+    tz:p.timeZoneName || ''
+  };
+}
+
+function todayInTz(tzid){
+  const p = tzParts(Date.now(), tzid);
+  return p.y + '-' + pad(p.mo) + '-' + pad(p.d);
+}
+
+function zonedToUtcMs(dateStr, h, m, s, tzid){
+  const [Y,M,D] = dateStr.split('-').map(Number);
+  let utc = Date.UTC(Y, M-1, D, h, m, s);
+  for (let i = 0; i < 4; i++){
+    const p = tzParts(utc, tzid);
+    const asUtc = Date.UTC(p.y, p.mo-1, p.d, p.h, p.mi, p.s);
+    const wanted = Date.UTC(Y, M-1, D, h, m, s);
+    utc += wanted - asUtc;
+  }
+  return utc;
+}
+
+function msToLocalStr(ms){
+  const p = tzParts(ms, LOCATION.tzid);
+  return pad(p.h) + ':' + pad(p.mi);
+}
+
+function msToHalachic(ms){
+  const halH = (ms - NETZ_MS) / SHAAH_MS;
+  if (halH < -1.5 || halH > 13.5) return '—';
+  const sign = halH < 0 ? '−' : '';
+  const abs = Math.abs(halH);
+  const h = Math.floor(abs);
+  const m = Math.round((abs - h) * 60);
+  return sign + 'שעה ' + h + (m > 0 ? ' ' + m + "'" : '');
+}
+
+function parseIsoMs(iso){
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
+}
+
+// --- sun / moon altitude -------------------------------------------------
+function sunAltitude(lat, lon, date){
+  const rad = Math.PI / 180;
+  const jc = (date.getTime() / 86400000 + 2440587.5 - 2451545) / 36525;
+  const geomMeanLong = (280.46646 + jc * (36000.76983 + jc * 0.0003032)) % 360;
+  const geomMeanAnom = 357.52911 + jc * (35999.05029 - 0.0001537 * jc);
+  const eccent = 0.016708634 - jc * (0.000042037 + 0.0000001267 * jc);
+  const sunEqCtr = Math.sin(geomMeanAnom * rad) * (1.914602 - jc * (0.004817 + 0.000014 * jc))
+    + Math.sin(2 * geomMeanAnom * rad) * (0.019993 - 0.000101 * jc)
+    + Math.sin(3 * geomMeanAnom * rad) * 0.000289;
+  const sunTrueLong = geomMeanLong + sunEqCtr;
+  const omega = 125.04 - 1934.136 * jc;
+  const lambda = sunTrueLong - 0.00569 - 0.00478 * Math.sin(omega * rad);
+  const meanObliq = 23 + (26 + ((21.448 - jc * (46.815 + jc * (0.00059 - jc * 0.001813)))) / 60) / 60;
+  const obliq = meanObliq + 0.00256 * Math.cos(omega * rad);
+  const decl = Math.asin(Math.sin(obliq * rad) * Math.sin(lambda * rad)) / rad;
+  const y = Math.tan((obliq / 2) * rad) ** 2;
+  const eqTime = 4 * ((y * Math.sin(2 * geomMeanLong * rad)
+    - 2 * eccent * Math.sin(geomMeanAnom * rad)
+    + 4 * eccent * y * Math.sin(geomMeanAnom * rad) * Math.cos(2 * geomMeanLong * rad)
+    - 0.5 * y * y * Math.sin(4 * geomMeanLong * rad)
+    - 1.25 * eccent * eccent * Math.sin(2 * geomMeanAnom * rad)) / rad);
+  const utcMin = date.getUTCHours() * 60 + date.getUTCMinutes() + date.getUTCSeconds() / 60
+    + date.getUTCMilliseconds() / 60000;
+  let trueSolar = (utcMin + eqTime + 4 * lon) % 1440;
+  if (trueSolar < 0) trueSolar += 1440;
+  const ha = trueSolar / 4 < 0 ? trueSolar / 4 + 180 : trueSolar / 4 - 180;
+  const cosZen = Math.sin(lat * rad) * Math.sin(decl * rad)
+    + Math.cos(lat * rad) * Math.cos(decl * rad) * Math.cos(ha * rad);
+  return 90 - Math.acos(Math.min(1, Math.max(-1, cosZen))) / rad;
+}
+
+function moonAltitude(lat, lon, date){
+  const rad = Math.PI / 180;
+  const jd = date.getTime() / 86400000 + 2440587.5;
+  const T = (jd - 2451545) / 36525;
+  const Lp = (218.3164477 + 481267.88123421 * T) % 360;
+  const D  = (297.8501921 + 445267.1114034 * T) % 360;
+  const M  = (357.5291092 + 35999.0502909 * T) % 360;
+  const Mp = (134.9633964 + 477198.8675055 * T) % 360;
+  const F  = (93.2720950 + 483202.0175233 * T) % 360;
+  const lonEcl = Lp
+    + 6.289 * Math.sin(Mp * rad)
+    + 1.274 * Math.sin((2 * D - Mp) * rad)
+    + 0.658 * Math.sin(2 * D * rad)
+    + 0.214 * Math.sin(2 * Mp * rad)
+    - 0.186 * Math.sin(M * rad);
+  const latEcl = 5.128 * Math.sin(F * rad)
+    + 0.281 * Math.sin((Mp + F) * rad)
+    + 0.278 * Math.sin((Mp - F) * rad);
+  const eps = 23.439291 - 0.0130042 * T;
+  const ra = Math.atan2(
+    Math.sin(lonEcl * rad) * Math.cos(eps * rad) - Math.tan(latEcl * rad) * Math.sin(eps * rad),
+    Math.cos(lonEcl * rad)
+  ) / rad;
+  const dec = Math.asin(
+    Math.sin(latEcl * rad) * Math.cos(eps * rad)
+    + Math.cos(latEcl * rad) * Math.sin(eps * rad) * Math.sin(lonEcl * rad)
+  ) / rad;
+  const gmst = (280.46061837 + 360.98564736629 * (jd - 2451545)) % 360;
+  const lst = (gmst + lon) % 360;
+  const ha = (lst - ra) * rad;
+  const sinAlt = Math.sin(lat * rad) * Math.sin(dec * rad)
+    + Math.cos(lat * rad) * Math.cos(dec * rad) * Math.cos(ha);
+  return Math.asin(Math.min(1, Math.max(-1, sinAlt))) / rad;
+}
+
+function el(tag, attrs = {}, parent = null){
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function scale(d0, d1, r0, r1){ return v => r0 + (v - d0) / (d1 - d0) * (r1 - r0); }
+
+function crPath(pts){
+  if (pts.length < 2) return '';
+  let d = 'M' + pts[0].x.toFixed(1) + ',' + pts[0].y.toFixed(1);
+  for (let i = 0; i < pts.length - 1; i++){
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const t0 = 0, t1 = t0 + Math.hypot(p1.x - p0.x, p1.y - p0.y) ** .5,
+          t2 = t1 + Math.hypot(p2.x - p1.x, p2.y - p1.y) ** .5,
+          t3 = t2 + Math.hypot(p3.x - p2.x, p3.y - p2.y) ** .5;
+    for (let k = 1; k <= 6; k++){
+      const t = t1 + (t2 - t1) * k / 6;
+      const l = (a, b, ta, tb) => ta === tb ? {x:a.x, y:a.y}
+        : {x:a.x + (t - ta) / (tb - ta) * (b.x - a.x), y:a.y + (t - ta) / (tb - ta) * (b.y - a.y)};
+      const a1 = l(p0, p1, t0, t1), a2 = l(p1, p2, t1, t2), a3 = l(p2, p3, t2, t3);
+      const b1 = l(a1, a2, t0, t2), b2 = l(a2, a3, t1, t3);
+      const c = l(b1, b2, t1, t2);
+      d += 'L' + c.x.toFixed(1) + ',' + c.y.toFixed(1);
+    }
+  }
+  return d;
+}
+
+// --- HebCal --------------------------------------------------------------
+function locQuery(place){
+  return 'geonameid=' + encodeURIComponent(place.geonameid || place.id);
+}
+
+function isViewingToday(){
+  const tz = LOCATION.tzid || 'UTC';
+  return DATE_STR === todayInTz(tz);
+}
+
+function selectedDateStr(tzid){
+  const el = document.getElementById('date');
+  const raw = el && el.value;
+  if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return todayInTz(tzid || LOCATION.tzid || 'UTC');
+}
+
+function isMonthEvent(title, category){
+  const t = (title || '').toLowerCase();
+  const c = (category || '').toLowerCase();
+  return c === 'roshchodesh' || c === 'mevarchim' || c === 'molad'
+    || /rosh\s*chodesh/.test(t)
+    || /\bmolad\b/.test(t)
+    || /mevarchim/.test(t)
+    || /ha-?chodesh/.test(t)
+    || /kiddush\s*levanah/.test(t)
+    || /birkat?\s*ha-?levanah/.test(t);
+}
+
+function addCandleWindow(items){
+  const hit = (items || []).find(i =>
+    i.category === 'candles' || /^Candle lighting/i.test(i.title || '')
+  );
+  if (!hit) return;
+  const latest = parseIsoMs(hit.date);
+  if (!Number.isFinite(latest)) return;
+  const shkia = ZMANIM_RAW.shkia;
+  const afterDark = Number.isFinite(shkia) && latest > shkia + 2 * 60000;
+  const start = afterDark ? ZMANIM_RAW.tzet : ZMANIM_RAW.plagHamincha;
+  const end = latest;
+  if (!Number.isFinite(start) || end <= start) return;
+
+  const wd = new Date(zonedToUtcMs(DATE_STR, 12, 0, 0, LOCATION.tzid))
+    .toLocaleDateString('en-US', {weekday: 'short', timeZone: LOCATION.tzid});
+  const yomTov = (items || []).some(i => {
+    if (i.category !== 'holiday') return false;
+    if (i.subcat === 'major') return true;
+    return /Rosh Hashana|Yom Kippur|Sukkot|Pesach|Shavuot|Shmini Atzeret|Simchat Torah|Shemini Atzeret/i.test(i.title || '');
+  });
+
+  let label = 'Candle lighting', he = 'הדלקת נרות';
+  if (wd === 'Fri' && yomTov){ label = 'Shabbat & Yom Tov candles'; he = 'נרות שבת ויום טוב'; }
+  else if (wd === 'Fri'){ label = 'Shabbat candles'; he = 'נרות שבת'; }
+  else { label = 'Yom Tov candles'; he = 'נרות יום טוב'; }
+
+  ZMANIM_WINDOWS = ZMANIM_WINDOWS.filter(z => z.id !== 'candles');
+  ZMANIM_WINDOWS.push({
+    id: 'candles',
+    label,
+    he,
+    color: '#57534e',
+    side: afterDark ? 'moon' : 'sun',
+    lane: 3,
+    start,
+    end
+  });
+}
+
+function monthEventBits(items, extraTitles){
+  const bits = [];
+  const seen = new Set();
+  function add(title, he){
+    const key = (title || '').toLowerCase();
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    bits.push({title, he: he || ''});
+  }
+  (items || []).forEach(i => {
+    if (isMonthEvent(i.title, i.category)) add(i.title, i.hebrew);
+  });
+  (extraTitles || []).forEach(t => {
+    if (isMonthEvent(t, '')) add(t, '');
+  });
+  return bits;
+}
+
+async function loadPlace(place){
+  LAST_PLACE = place;
+  document.getElementById('sub').textContent = 'Loading HebCal…';
+  const monthEl0 = document.getElementById('month-line');
+  if (monthEl0){ monthEl0.hidden = true; monthEl0.textContent = ''; }
+  const tzGuess = place.tzid || LOCATION.tzid || 'UTC';
+  DATE_STR = selectedDateStr(tzGuess);
+
+  const zUrl = `${HEBCAL}/zmanim?cfg=json&sec=1&ue=on&date=${DATE_STR}&${locQuery(place)}`;
+  const zmanim = await fetch(zUrl).then(r => {
+    if (!r.ok) throw new Error('zmanim ' + r.status);
+    return r.json();
+  });
+
+  const loc = zmanim.location || {};
+  const coordTitle = loc.title && /\d+°/.test(loc.title);
+  LOCATION = {
+    name: place.value || (!coordTitle && (loc.title || loc.city)) || place.value,
+    lat: loc.latitude,
+    lng: loc.longitude,
+    tzid: loc.tzid || place.tzid,
+    geonameid: loc.geonameid || place.id,
+    geo: loc.geo || place.geo,
+    cc: loc.cc || place.cc || ''
+  };
+  DATE_STR = (zmanim.date || DATE_STR).slice(0, 10);
+  if (dateEl.value !== DATE_STR) dateEl.value = DATE_STR;
+  if (typeof syncDateChrome === 'function') syncDateChrome();
+
+  const t = zmanim.times || {};
+  ZMANIM_RAW = {
+    alotHashachar:       parseIsoMs(t.alotHaShachar),
+    misheyakir:          parseIsoMs(t.misheyakir),
+    netz:                parseIsoMs(t.sunrise),
+    sofZmanShemaMGA:     parseIsoMs(t.sofZmanShmaMGA),
+    sofZmanShemaGRA:     parseIsoMs(t.sofZmanShma),
+    sofZmanShacharitGRA: parseIsoMs(t.sofZmanTfilla),
+    chatzot:             parseIsoMs(t.chatzot),
+    minchaGedola:        parseIsoMs(t.minchaGedola),
+    minchaKetana:        parseIsoMs(t.minchaKetana),
+    plagHamincha:        parseIsoMs(t.plagHaMincha),
+    shkia:               parseIsoMs(t.sunset),
+    tzet:                parseIsoMs(t.tzeit7083deg || t.dusk),
+    tzet72:              parseIsoMs(t.tzeit72min)
+  };
+
+  DAY_START_MS = zonedToUtcMs(DATE_STR, 0, 0, 0, LOCATION.tzid);
+  DAY_END_MS = zonedToUtcMs(DATE_STR, 23, 59, 0, LOCATION.tzid);
+  DAY_SPAN_MS = DAY_END_MS - DAY_START_MS;
+  NETZ_MS = ZMANIM_RAW.netz;
+  SHKIA_MS = ZMANIM_RAW.shkia;
+  SHAAH_MS = (SHKIA_MS - NETZ_MS) / 12;
+  TZ_ABBR = tzParts(NETZ_MS || DAY_START_MS + 12 * 3600000, LOCATION.tzid).tz || '';
+
+  DATA = [];
+  for (let m = 0; m < 1440; m++){
+    const ms = DAY_START_MS + m * 60000;
+    const dt = new Date(ms);
+    DATA.push({
+      ms,
+      sunAlt: sunAltitude(LOCATION.lat, LOCATION.lng, dt),
+      moonAlt: moonAltitude(LOCATION.lat, LOCATION.lng, dt)
+    });
+  }
+
+  ZMANIM_WINDOWS = WINDOW_DEFS.map(z => ({
+    ...z,
+    start: ZMANIM_RAW[z.startKey],
+    end: ZMANIM_RAW[z.endKey]
+  })).filter(z => Number.isFinite(z.start) && Number.isFinite(z.end) && z.end > z.start);
+
+  const [Y,M,D] = DATE_STR.split('-').map(Number);
+  const convUrl = `${HEBCAL}/converter?cfg=json&g2h=1&gy=${Y}&gm=${M}&gd=${D}`;
+  const calUrl = `${HEBCAL}/hebcal?v=1&cfg=json&maj=on&min=on&mod=on&nx=on&ss=on&mf=on&c=on&start=${DATE_STR}&end=${DATE_STR}&${locQuery(place)}`;
+  let hebrew = '', heEn = '', events = [], monthBits = [];
+  try {
+    const [conv, cal] = await Promise.all([
+      fetch(convUrl).then(r => r.json()),
+      fetch(calUrl).then(r => r.json())
+    ]);
+    hebrew = conv.hebrew || '';
+    if (conv.hd && conv.hm && conv.hy){
+      heEn = conv.hd + ' ' + String(conv.hm).replace(/'/g, '').toUpperCase() + ' ' + conv.hy;
+    }
+    events = (conv.events || []).slice();
+    const items = cal.items || [];
+    items.forEach(i => { if (i.title && !events.includes(i.title)) events.push(i.title); });
+    monthBits = monthEventBits(items, events);
+    addCandleWindow(items);
+  } catch (e) { /* subtitle still works without events */ }
+
+  const weekday = new Date(zonedToUtcMs(DATE_STR, 12, 0, 0, LOCATION.tzid))
+    .toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric', timeZone: LOCATION.tzid});
+  const monthTitles = new Set(monthBits.map(b => b.title.toLowerCase()));
+  const evStr = events.filter(e =>
+    !/^Candle lighting/i.test(e) && !/^Havdalah/i.test(e) &&
+    e !== 'Fast begins' && e !== 'Fast ends' &&
+    !monthTitles.has(e.toLowerCase())
+  ).slice(0, 3).join(' · ');
+  document.getElementById('sub').textContent =
+    [weekday, heEn, hebrew, evStr, LOCATION.name].filter(Boolean).join('  ·  ');
+  const monthEl = document.getElementById('month-line');
+  if (monthBits.length){
+    monthEl.hidden = false;
+    monthEl.innerHTML = monthBits.map(b =>
+      b.he ? `${b.title} <span class="he">${b.he}</span>` : b.title
+    ).join('  ·  ');
+  } else {
+    monthEl.hidden = true;
+    monthEl.textContent = '';
+  }
+  setCityHeading(LOCATION.name);
+  try { localStorage.setItem('witz-place', JSON.stringify({
+    id: LOCATION.geonameid || place.id,
+    geonameid: LOCATION.geonameid || place.id,
+    value: LOCATION.name,
+    geo: 'geoname'
+  })); } catch (e) {}
+
+  render();
+}
+
+function setCityHeading(name){
+  const shortName = (name || 'Jerusalem').split(',')[0];
+  document.getElementById('cityTitle').textContent = shortName;
+  document.title = 'Where in the Zman?';
+}
+
+// --- tooltips ------------------------------------------------------------
+function zmanTimesHtml(z){
+  const startGeo = msToLocalStr(z.start), endGeo = msToLocalStr(z.end);
+  const startHal = msToHalachic(z.start), endHal = msToHalachic(z.end);
+  const dMin = Math.round((z.end - z.start) / 60000);
+  const dH = Math.floor(dMin / 60), dM = dMin % 60;
+  const durStr = dH > 0 ? `${dH}h ${dM}m` : `${dM}m`;
+  return `<div class="tt-t" style="color:${z.color}">${z.label} &nbsp;·&nbsp; <span style="font-size:.7rem;color:#c8d8f0;">${z.he}</span></div>`
+    + `<div class="tt-sect">EARLIEST</div>`
+    + `<div class="tt-time-row"><span>${startGeo} ${TZ_ABBR}</span><span style="color:#a0c8a0">${startHal}</span></div>`
+    + `<div class="tt-sect">LATEST</div>`
+    + `<div class="tt-time-row"><span>${endGeo} ${TZ_ABBR}</span><span style="color:#a0c8a0">${endHal}</span></div>`
+    + `<div class="tt-sect">DURATION</div>`
+    + `<div>${durStr}</div>`;
+}
+
+function hoverBodyAt(ms){
+  const m = Math.max(0, Math.min(1439, Math.round((ms - DAY_START_MS) / 60000)));
+  const d = DATA[m];
+  if (!d) return '';
+  const active = ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end);
+  let html = `<div class="tt-t">${msToLocalStr(d.ms)} ${TZ_ABBR}&nbsp;·&nbsp;${msToHalachic(d.ms)}</div>`;
+  if (active.length){
+    html += `<div class="tt-sect">ACTIVE ZMANIM</div>`;
+    active.forEach(z => {
+      html += `<div style="color:${z.color}">▸ ${z.label}<br><span style="color:#c8d8f0;opacity:.85">${msToLocalStr(z.start)}–${msToLocalStr(z.end)} ${TZ_ABBR}</span></div>`;
+    });
+  } else {
+    html += `<div style="color:#4a6080;font-size:.63rem;margin-top:4px">No active zman</div>`;
+  }
+  return html;
+}
+
+function nowBody(){
+  const nowMs = getNowMs();
+  const wallStr = msToLocalStr(Date.now());
+  const m = Math.max(0, Math.min(1439, Math.round((nowMs - DAY_START_MS) / 60000)));
+  const d = DATA[m];
+  const active = d ? ZMANIM_WINDOWS.filter(z => d.ms >= z.start && d.ms <= z.end) : [];
+  let html = `<div class="tt-t tt-now">▶ Now — ${wallStr} ${TZ_ABBR}</div>`;
+  if (active.length){
+    html += `<div class="tt-sect">ACTIVE NOW</div>`;
+    active.forEach(z => {
+      html += `<div style="color:${z.color}">▸ ${z.label}<br><span style="color:#c8d8f0;opacity:.85">${msToLocalStr(z.start)}–${msToLocalStr(z.end)} ${TZ_ABBR}</span></div>`;
+    });
+  }
+  return html;
+}
+
+function positionHover(clientX, clientY){
+  const vpW = window.innerWidth, vpH = window.innerHeight;
+  const ttW = ttHover.offsetWidth || 220, ttH = ttHover.offsetHeight || 110;
+  let lx = clientX + 16, ly = clientY - 12;
+  if (lx + ttW > vpW - 8) lx = clientX - ttW - 12;
+  if (ly + ttH > vpH - 8) ly = clientY - ttH - 12;
+  if (ly < 8) ly = 8;
+  ttHover.style.left = lx + 'px';
+  ttHover.style.top = ly + 'px';
+}
+
+function showHoverTt(ms, clientX, clientY){
+  if (IS_COARSE) return;
+  const html = hoverBodyAt(ms);
+  if (!html){ ttHover.style.display = 'none'; return; }
+  ttHover.innerHTML = html;
+  ttHover.style.display = 'block';
+  positionHover(clientX, clientY);
+}
+
+function showHoverZman(z, clientX, clientY){
+  if (IS_COARSE) return;
+  ttHover.innerHTML = zmanTimesHtml(z);
+  ttHover.style.display = 'block';
+  positionHover(clientX, clientY);
+}
+
+function showHoverNow(clientX, clientY){
+  if (IS_COARSE) return;
+  ttHover.innerHTML = nowBody();
+  ttHover.style.display = 'block';
+  positionHover(clientX, clientY);
+}
+
+function hideHover(){ ttHover.style.display = 'none'; }
+
+function openPin(html){
+  ttPin.innerHTML = '<button type="button" class="tt-close" aria-label="Close">×</button>' + html;
+  ttPin.hidden = false;
+  ttPin.classList.add('open');
+  const btn = ttPin.querySelector('.tt-close');
+  if (btn) btn.addEventListener('click', evt => { evt.stopPropagation(); closePin(); });
+}
+
+function closePin(){
+  ttPin.classList.remove('open');
+  ttPin.hidden = true;
+  ttPin.innerHTML = '';
+  deselectAll();
+}
+
+function deselectAll(){
+  selectedId = null;
+  document.querySelectorAll('.li.sel').forEach(n => n.classList.remove('sel'));
+  Object.values(lanePaths).forEach(p => { if (p) p.setAttribute('stroke-width', LANE_W); });
+}
+
+function selectLane(id){
+  deselectAll();
+  selectedId = id;
+  const item = document.querySelector(`.li[data-id="${id}"]`);
+  if (item) item.classList.add('sel');
+  if (lanePaths[id]) lanePaths[id].setAttribute('stroke-width', LANE_W_SEL);
+  if (id === 'now') openPin(nowBody());
+  else {
+    const z = ZMANIM_WINDOWS.find(w => w.id === id);
+    if (z) openPin(zmanTimesHtml(z));
+  }
+}
+
+function getNowMs(){
+  const p = tzParts(Date.now(), LOCATION.tzid);
+  return zonedToUtcMs(DATE_STR, p.h, p.mi, p.s, LOCATION.tzid);
+}
+
+function updateNowLine(){
+  if (!nowLineEl || !xS_global || !isViewingToday()) return;
+  const x = xS_global(getNowMs());
+  nowLineEl.setAttribute('x1', x); nowLineEl.setAttribute('x2', x);
+  if (nowLineHitEl){ nowLineHitEl.setAttribute('x1', x); nowLineHitEl.setAttribute('x2', x); }
+}
+
+function cssVar(name, fallback){
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+function chartTheme(){
+  return {
+    paper: cssVar('--paper', '#f5f7fa'),
+    axis: cssVar('--axis', '#3d4a5c'),
+    label: cssVar('--text', '#122033'),
+    muted: cssVar('--muted', '#243447'),
+    gold: cssVar('--gold', '#1f6f7a'),
+    sun: cssVar('--sun', '#5c4a1e'),
+    moon: cssVar('--moon', '#1f4a78'),
+    now: cssVar('--now', '#0f6b52'),
+    grid: cssVar('--grid', '#c5ced8'),
+    horizon: cssVar('--horizon', '#8a96a4')
+  };
+}
+
+function placeLabels(items, minGap){
+  const kept = [];
+  items.slice().sort((a,b) => a.x - b.x).forEach(it => {
+    if (kept.length && Math.abs(it.x - kept[kept.length-1].x) < minGap) return;
+    kept.push(it);
+  });
+  return kept;
+}
+
+// --- chart ---------------------------------------------------------------
+function render(){
+  const svg = document.getElementById('chart');
+  svg.innerHTML = '';
+  const th = chartTheme();
+  selectedId = null; lanePaths = {}; nowLineEl = nowLineHitEl = null;
+  const W = Math.max(280, svg.clientWidth || 1096);
+  const narrow = W < 700;
+  const compact = W < 420;
+  MARGIN = {
+    top: narrow ? 84 : 78,
+    right: compact ? 12 : 24,
+    bottom: narrow ? 58 : 68,
+    left: compact ? 34 : 48
+  };
+  LANE_W = compact ? 2 : 2.4;
+  LANE_GAP = compact ? 7 : 8;
+  LANE_W_SEL = compact ? 3.4 : 3.8;
+  const fs = compact ? 8 : (narrow ? 9 : 10);
+  const H = Math.max(340, Math.min(560, Math.round((window.innerHeight || 800) * (narrow ? 0.48 : 0.52))));
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const iW = Math.max(120, W - MARGIN.left - MARGIN.right);
+  const iH = Math.max(180, H - MARGIN.top - MARGIN.bottom);
+  iW_global = iW; iH_global = iH;
+  const xS = scale(DAY_START_MS, DAY_END_MS, 0, iW);
+  const yS = scale(Y_BOT, Y_TOP, iH, 0);
+  const clampY = y => Math.max(3, Math.min(iH - 3, y));
+  xS_global = xS; yS_global = yS;
+
+  const defs = el('defs', {}, svg);
+  const sunG = el('linearGradient', {id:'sunG', gradientUnits:'userSpaceOnUse',
+    x1:0, y1:yS(Y_BOT), x2:0, y2:yS(Y_TOP)}, defs);
+  el('stop', {offset:'0%', 'stop-color':'#9a3412'}, sunG);
+  el('stop', {offset:'47%', 'stop-color':'#c2410c'}, sunG);
+  el('stop', {offset:'53%', 'stop-color':'#f59e0b'}, sunG);
+  el('stop', {offset:'100%', 'stop-color':'#facc15'}, sunG);
+  const moonG = el('linearGradient', {id:'moonG', gradientUnits:'userSpaceOnUse',
+    x1:0, y1:yS(Y_BOT), x2:0, y2:yS(Y_TOP)}, defs);
+  el('stop', {offset:'0%', 'stop-color':'#1e3a8a'}, moonG);
+  el('stop', {offset:'50%', 'stop-color':'#2563eb'}, moonG);
+  el('stop', {offset:'100%', 'stop-color':'#60a5fa'}, moonG);
+  const glow = el('filter', {id:'glow'}, defs);
+  el('feGaussianBlur', {stdDeviation:'1.4', result:'b'}, glow);
+  const merge = el('feMerge', {}, glow);
+  el('feMergeNode', {in:'b'}, merge);
+  el('feMergeNode', {in:'SourceGraphic'}, merge);
+  const clip = el('clipPath', {id:'chartClip'}, defs);
+  el('rect', {x:'0', y:'0', width:iW, height:iH}, clip);
+
+  const g = el('g', {transform:`translate(${MARGIN.left},${MARGIN.top})`}, svg);
+  g_global = g;
+
+  const chartBg = el('rect', {x:0, y:0, width:iW, height:iH, fill: th.paper, 'clip-path':'url(#chartClip)'}, g);
+  const cursor = el('line', {x1:0, x2:0, y1:0, y2:iH, stroke: th.gold, 'stroke-width':1.5, display:'none', 'pointer-events':'none'}, g);
+  function chartPos(evt){
+    const svgRect = svg.getBoundingClientRect();
+    return (evt.clientX - svgRect.left) / svgRect.width * W - MARGIN.left;
+  }
+  const magnetPts = [];
+  if (Number.isFinite(ZMANIM_RAW.netz)) magnetPts.push({x: xS(ZMANIM_RAW.netz), ms: ZMANIM_RAW.netz});
+  if (Number.isFinite(ZMANIM_RAW.shkia)) magnetPts.push({x: xS(ZMANIM_RAW.shkia), ms: ZMANIM_RAW.shkia});
+  const MAGNET_PX = Math.max(12, Math.min(22, iW * 0.018));
+  function magnetize(cx){
+    let best = null, bestD = MAGNET_PX;
+    for (const p of magnetPts){
+      const d = Math.abs(cx - p.x);
+      if (d < bestD){ bestD = d; best = p; }
+    }
+    if (!best) return {x: cx, ms: DAY_START_MS + (cx / iW) * DAY_SPAN_MS, snap: false};
+    return {x: best.x, ms: best.ms, snap: true};
+  }
+  function setCursor(cx, snapped){
+    cursor.setAttribute('x1', cx);
+    cursor.setAttribute('x2', cx);
+    cursor.setAttribute('display', '');
+    cursor.setAttribute('stroke', snapped ? th.now : th.axis);
+    cursor.setAttribute('stroke-width', snapped ? '2.2' : '1.5');
+  }
+  function applyScrub(raw, pin){
+    const cx = Math.max(0, Math.min(iW, raw));
+    const m = magnetize(cx);
+    scrubX = m.x;
+    setCursor(m.x, m.snap);
+    hideHover();
+    if (pin){
+      deselectAll();
+      openPin(hoverBodyAt(m.ms));
+    }
+  }
+  let dragHit = null, scrubHandle = null;
+  if (IS_COARSE){
+    const startX = Number.isFinite(scrubX) ? scrubX : (isViewingToday() ? xS(getNowMs()) : iW / 2);
+    applyScrub(startX, false);
+    dragHit = el('rect', {
+      x:0, y:0, width:iW, height:iH, fill:'transparent',
+      style:'touch-action:none;cursor:ew-resize'
+    }, g);
+    let dragging = false;
+    dragHit.addEventListener('pointerdown', evt => {
+      evt.preventDefault();
+      dragging = true;
+      try { dragHit.setPointerCapture(evt.pointerId); } catch (e) {}
+      applyScrub(chartPos(evt), true);
+    });
+    dragHit.addEventListener('pointermove', evt => {
+      if (!dragging) return;
+      evt.preventDefault();
+      applyScrub(chartPos(evt), true);
+    });
+    const endDrag = () => { dragging = false; };
+    dragHit.addEventListener('pointerup', endDrag);
+    dragHit.addEventListener('pointercancel', endDrag);
+    scrubHandle = el('circle', {
+      cx: Number.isFinite(scrubX) ? scrubX : startX,
+      cy: iH, r: 11, fill: th.gold, stroke: th.paper, 'stroke-width':2,
+      'pointer-events':'none'
+    }, g);
+    const origSet = setCursor;
+    setCursor = function(cx, snapped){
+      origSet(cx, snapped);
+      if (scrubHandle) scrubHandle.setAttribute('cx', cx);
+    };
+    setCursor(Number.isFinite(scrubX) ? scrubX : startX, false);
+  } else {
+    chartBg.addEventListener('mousemove', evt => {
+      const raw = chartPos(evt);
+      if (raw < 0 || raw > iW){ cursor.setAttribute('display', 'none'); hideHover(); return; }
+      const m = magnetize(raw);
+      setCursor(m.x, m.snap);
+      showHoverTt(m.ms, evt.clientX, evt.clientY);
+    });
+    chartBg.addEventListener('mouseleave', () => { cursor.setAttribute('display', 'none'); hideHover(); });
+    chartBg.addEventListener('click', evt => {
+      const raw = chartPos(evt);
+      if (raw < 0 || raw > iW) return;
+      const m = magnetize(raw);
+      deselectAll();
+      openPin(hoverBodyAt(m.ms));
+    });
+  }
+  const zeroY = yS(0);
+  el('line', {x1:0, x2:iW, y1:zeroY, y2:zeroY, stroke: th.horizon, 'stroke-width':1.25}, g);
+
+  const axL = el('g', {}, g);
+  const altStep = compact ? 45 : 30;
+  for (let a = -90; a <= 90; a += altStep){
+    const y = yS(a);
+    el('line', {x1:-6, x2:0, y1:y, y2:y, stroke: th.axis, 'stroke-width':2}, axL);
+    const t = el('text', {x:-8, y:y + 3, 'text-anchor':'end', fill: th.label, 'font-size':fs}, axL);
+    t.textContent = a + '°';
+  }
+
+  const MARKERS = compact
+    ? [{key:'netz', abbr:'Netz'}, {key:'chatzot', abbr:'Chatzot'}, {key:'shkia', abbr:'Shkia'}]
+    : [
+        {key:'alotHashachar', abbr:'Alot'}, {key:'netz', abbr:'Netz'},
+        {key:'chatzot', abbr:'Chatzot'}, {key:'plagHamincha', abbr:'Plag'},
+        {key:'shkia', abbr:'Shkia'}, {key:'tzet', abbr:'Tzet'},
+      ];
+  const named = [];
+  MARKERS.forEach(mk => {
+    const ms = ZMANIM_RAW[mk.key];
+    if (!Number.isFinite(ms)) return;
+    const x = xS(ms);
+    if (x < -8 || x > iW + 8) return;
+    el('line', {x1:x, x2:x, y1:0, y2:iH, stroke: th.grid, 'stroke-width':1}, g);
+    named.push({x, abbr: mk.abbr});
+  });
+  placeLabels(named, compact ? 44 : 52).forEach((it, i) => {
+    const t = el('text', {
+      x:it.x, y: i % 2 ? -36 : -22,
+      'text-anchor':'middle', fill: th.label, 'font-size':fs
+    }, g);
+    t.textContent = it.abbr;
+  });
+
+  const sunPts = [], moonPts = [];
+  for (let m = 0; m < 1440; m += 1){
+    const d = DATA[m];
+    sunPts.push({x:xS(d.ms), y:clampY(yS(d.sunAlt))});
+    moonPts.push({x:xS(d.ms), y:clampY(yS(d.moonAlt))});
+  }
+  el('path', {fill:'none', stroke:'url(#sunG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'12 7', filter:'url(#glow)',
+    'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(sunPts)}, g);
+  el('path', {fill:'none', stroke:'url(#moonG)', 'stroke-width': 2, 'stroke-linecap':'round', 'stroke-dasharray':'2 5',
+    opacity:.8, 'clip-path':'url(#chartClip)', 'pointer-events':'none', d:crPath(moonPts)}, g);
+  if (!compact){
+    const mlt = el('text', {x:6, y:yS(-89), fill: th.muted, 'font-size':fs, opacity:.65}, g);
+    mlt.textContent = 'Moon altitude (same scale)';
+  }
+
+  ZMANIM_WINDOWS.forEach(z => {
+    const offset = LANE_GAP * (z.lane + 1);
+    const dir = z.side === 'sun' ? 1 : -1;
+    const pts = [];
+    for (let m = 0; m < 1440; m += 1){
+      const d = DATA[m];
+      if (d.ms < z.start || d.ms > z.end) continue;
+      const alt = z.side === 'sun' ? d.sunAlt : d.moonAlt;
+      pts.push({x:xS(d.ms), y:clampY(yS(alt) + dir * offset)});
+    }
+    if (pts.length < 2) return;
+    const path = el('path', {fill:'none', stroke:z.color, 'stroke-width':LANE_W, 'stroke-linecap':'round', 'stroke-linejoin':'round',
+      opacity:.95, 'clip-path':'url(#chartClip)', d:crPath(pts), cursor:'pointer', class:'zman-lane'}, g);
+    lanePaths[z.id] = path;
+    const lp = pts[pts.length - 1];
+    if (lp.y > 2 && lp.y < iH - 2){
+      el('circle', {cx:lp.x, cy:lp.y, r:2.2, fill:z.color, opacity:.95, 'clip-path':'url(#chartClip)'}, g);
+    }
+    const hitPath = el('path', {fill:'none', stroke:'transparent', 'stroke-width':14,
+      'clip-path':'url(#chartClip)', d:crPath(pts), cursor:'pointer'}, g);
+    hitPath.addEventListener('click', evt => {
+      evt.stopPropagation();
+      if (selectedId === z.id){ closePin(); return; }
+      selectLane(z.id);
+    });
+    hitPath.addEventListener('mousemove', evt => {
+      evt.stopPropagation();
+      showHoverZman(z, evt.clientX, evt.clientY);
+    });
+    hitPath.addEventListener('mouseleave', hideHover);
+  });
+
+  if (isViewingToday()){
+    const nowX = xS(getNowMs());
+    nowLineEl = el('line', {
+      x1:nowX, x2:nowX, y1:0, y2:iH,
+      stroke: th.now, 'stroke-width':1.75,
+      'clip-path':'url(#chartClip)'
+    }, g);
+    const nowLabel = el('text', {x:nowX + 6, y:16, 'text-anchor':'start', fill: th.now, 'font-size':fs}, g);
+    nowLabel.textContent = 'Now';
+    nowLineHitEl = el('line', {
+      x1:nowX, x2:nowX, y1:0, y2:iH,
+      stroke:'transparent', 'stroke-width':22, cursor:'pointer',
+      'clip-path':'url(#chartClip)'
+    }, g);
+    nowLineHitEl.addEventListener('click', evt => {
+      evt.stopPropagation();
+      if (selectedId === 'now'){ closePin(); return; }
+      selectLane('now');
+    });
+    nowLineHitEl.addEventListener('mousemove', evt => {
+      evt.stopPropagation();
+      showHoverNow(evt.clientX, evt.clientY);
+    });
+    nowLineHitEl.addEventListener('mouseleave', hideHover);
+  }
+  if (IS_COARSE){
+    if (cursor && cursor.parentNode) g.appendChild(cursor);
+    if (dragHit) g.appendChild(dragHit);
+    if (scrubHandle) g.appendChild(scrubHandle);
+  }
+
+  const axBot = el('g', {transform:`translate(0,${iH})`}, g);
+  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke: th.horizon, 'stroke-width':2}, axBot);
+  const hourStep = compact ? 4 : (narrow ? 3 : 2);
+  for (let h = 0; h < 24; h += hourStep){
+    const ms = zonedToUtcMs(DATE_STR, h, 0, 0, LOCATION.tzid);
+    const x = xS(ms); if (x < 0 || x > iW) continue;
+    el('line', {x1:x, x2:x, y1:0, y2:6, stroke: th.axis, 'stroke-width':2}, axBot);
+    const t = el('text', {x:x, y:20, 'text-anchor':'middle', fill: th.label, 'font-size':fs}, axBot);
+    t.textContent = pad(h);
+  }
+  const xLB = el('text', {x:iW / 2, y: narrow ? 40 : 46, 'text-anchor':'middle', fill: th.muted, 'font-size':fs, 'letter-spacing':'.08em'}, axBot);
+  xLB.textContent = narrow ? TZ_ABBR : ('LOCAL TIME  ' + TZ_ABBR);
+
+  const axTop = el('g', {}, g);
+  el('line', {x1:0, x2:iW, y1:0, y2:0, stroke: th.horizon, 'stroke-width':2}, axTop);
+  const shaStep = compact ? 2 : 1;
+  const shaLabs = [];
+  for (let i = 0; i <= 12; i += shaStep){
+    const ms = NETZ_MS + i * SHAAH_MS;
+    const x = xS(ms); if (x < 0 || x > iW) continue;
+    el('line', {x1:x, x2:x, y1:0, y2:-6, stroke: th.axis, 'stroke-width':2}, axTop);
+    shaLabs.push({x, abbr: String(i)});
+  }
+  placeLabels(shaLabs, compact ? 22 : 18).forEach(it => {
+    const t = el('text', {x:it.x, y:-8, 'text-anchor':'middle', fill: th.label, 'font-size':fs}, axTop);
+    t.textContent = it.abbr;
+  });
+
+  const leg = document.getElementById('legend');
+  leg.innerHTML = '';
+  if (isViewingToday()){
+    const nowItem = document.createElement('div');
+    nowItem.className = 'li'; nowItem.setAttribute('data-id', 'now');
+    nowItem.innerHTML = '<div class="ls" style="background:#22d3a0;border:1px dashed #22d3a0"></div>'
+      + '<span>Now <span style="opacity:.45;font-size:.6rem">current time</span></span>';
+    nowItem.addEventListener('click', () => {
+      if (selectedId === 'now'){ closePin(); return; }
+      selectLane('now');
+    });
+    leg.appendChild(nowItem);
+  }
+  [{color:'#f59e0b', label:'Sun altitude'}, {color:'#2563eb', label:'Moon altitude'}]
+    .forEach(z => {
+      const d = document.createElement('div'); d.className = 'li';
+      d.innerHTML = `<div class="ls" style="background:${z.color}"></div><span>${z.label}</span>`;
+      leg.appendChild(d);
+    });
+  ZMANIM_WINDOWS.forEach(z => {
+    const d = document.createElement('div'); d.className = 'li'; d.setAttribute('data-id', z.id);
+    d.innerHTML = `<div class="ls" style="background:${z.color}"></div>`
+      + `<span>${z.label} <span style="opacity:.45;font-size:.6rem">${z.he}</span></span>`;
+    d.addEventListener('click', () => {
+      if (selectedId === z.id){ closePin(); return; }
+      selectLane(z.id);
+    });
+    d.addEventListener('mouseover', evt => showHoverZman(z, evt.clientX, evt.clientY));
+    d.addEventListener('mouseleave', hideHover);
+    leg.appendChild(d);
+  });
+}
+
+// --- city search (cities.json) -------------------------------------------
+const CC_NAME = {AD:'Andorra',AE:'UAE',AF:'Afghanistan',AL:'Albania',AM:'Armenia',AR:'Argentina',AT:'Austria',AU:'Australia',AZ:'Azerbaijan',BA:'Bosnia',BE:'Belgium',BG:'Bulgaria',BR:'Brazil',BY:'Belarus',CA:'Canada',CH:'Switzerland',CL:'Chile',CN:'China',CO:'Colombia',CR:'Costa Rica',CY:'Cyprus',CZ:'Czechia',DE:'Germany',DK:'Denmark',DZ:'Algeria',EE:'Estonia',EG:'Egypt',ES:'Spain',ET:'Ethiopia',FI:'Finland',FR:'France',GB:'United Kingdom',GE:'Georgia',GR:'Greece',GT:'Guatemala',HK:'Hong Kong',HR:'Croatia',HU:'Hungary',ID:'Indonesia',IE:'Ireland',IL:'Israel',IN:'India',IR:'Iran',IQ:'Iraq',IS:'Iceland',IT:'Italy',JM:'Jamaica',JO:'Jordan',JP:'Japan',KE:'Kenya',KR:'South Korea',KW:'Kuwait',LB:'Lebanon',LT:'Lithuania',LU:'Luxembourg',LV:'Latvia',MA:'Morocco',MD:'Moldova',ME:'Montenegro',MK:'North Macedonia',MX:'Mexico',MY:'Malaysia',NG:'Nigeria',NL:'Netherlands',NO:'Norway',NZ:'New Zealand',PA:'Panama',PE:'Peru',PH:'Philippines',PK:'Pakistan',PL:'Poland',PR:'Puerto Rico',PS:'Palestine',PT:'Portugal',QA:'Qatar',RO:'Romania',RS:'Serbia',RU:'Russia',SA:'Saudi Arabia',SE:'Sweden',SG:'Singapore',SI:'Slovenia',SK:'Slovakia',TH:'Thailand',TR:'Turkey',TW:'Taiwan',UA:'Ukraine',US:'United States',UY:'Uruguay',UZ:'Uzbekistan',VE:'Venezuela',VN:'Vietnam',ZA:'South Africa',ZW:'Zimbabwe'};
+
+const cityInput = document.getElementById('city');
+const suggestEl = document.getElementById('suggest');
+let acTimer = null, acItems = [], acIndex = -1;
+let CITY_ROWS = null, CITY_LOAD = null;
+let committedLabel = DEFAULT_PLACE.value;
+
+function countryLabel(cc){ return CC_NAME[cc] || cc || ''; }
+
+function cityLabel(row){
+  const name = row[1], cc = row[2];
+  const country = countryLabel(cc);
+  return country ? name + ', ' + country : name;
+}
+
+function ensureCities(){
+  if (CITY_ROWS) return Promise.resolve(CITY_ROWS);
+  if (!CITY_LOAD){
+    CITY_LOAD = fetch('cities.json').then(r => {
+      if (!r.ok) throw new Error('cities ' + r.status);
+      return r.json();
+    }).then(rows => { CITY_ROWS = rows; return rows; });
+  }
+  return CITY_LOAD;
+}
+
+function rowAscii(row){ return (row[6] || '').toLowerCase(); }
+
+function placeFromRow(row){
+  return {
+    id: row[0],
+    geonameid: row[0],
+    value: cityLabel(row),
+    geo: 'geoname',
+    cc: row[2],
+    lat: row[4],
+    lng: row[5]
+  };
+}
+
+function searchCities(q){
+  const needle = q.trim().toLowerCase();
+  if (needle.length < 2 || !CITY_ROWS) return [];
+  const starts = [], contains = [];
+  for (let i = 0; i < CITY_ROWS.length; i++){
+    const row = CITY_ROWS[i];
+    const name = row[1].toLowerCase();
+    const ascii = rowAscii(row);
+    const hit = name.startsWith(needle) || ascii.startsWith(needle);
+    const mid = !hit && (name.includes(needle) || ascii.includes(needle));
+    if (hit) starts.push(row);
+    else if (mid && contains.length < 40) contains.push(row);
+    if (starts.length >= 12) break;
+  }
+  const merged = starts.concat(contains);
+  merged.sort((a, b) => {
+    const as = a[1].toLowerCase().startsWith(needle) || rowAscii(a).startsWith(needle) ? 1 : 0;
+    const bs = b[1].toLowerCase().startsWith(needle) || rowAscii(b).startsWith(needle) ? 1 : 0;
+    if (bs !== as) return bs - as;
+    return (b[3] || 0) - (a[3] || 0);
+  });
+  const seen = new Set();
+  const out = [];
+  for (const row of merged){
+    const key = row[1].toLowerCase() + '|' + row[2];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(placeFromRow(row));
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function closeSuggest(){
+  suggestEl.classList.remove('open');
+  suggestEl.innerHTML = '';
+  cityInput.setAttribute('aria-expanded', 'false');
+  acItems = []; acIndex = -1;
+}
+
+function renderSuggest(items, emptyMsg){
+  acItems = items; acIndex = items.length ? 0 : -1;
+  suggestEl.innerHTML = '';
+  if (!items.length){
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = emptyMsg || 'Type to search cities';
+    suggestEl.appendChild(empty);
+  } else {
+    items.forEach((it, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false');
+      b.innerHTML = `<span>${it.value}</span><div class="meta">${it.cc || ''}</div>`;
+      b.addEventListener('mousedown', evt => { evt.preventDefault(); pickPlace(it); });
+      suggestEl.appendChild(b);
+    });
+  }
+  suggestEl.classList.add('open');
+  cityInput.setAttribute('aria-expanded', 'true');
+}
+
+function pickPlace(it){
+  committedLabel = it.value;
+  cityInput.value = it.value;
+  closeSuggest();
+  loadPlace(it).catch(err => {
+    document.getElementById('sub').textContent = 'HebCal lookup failed — ' + err.message;
+  });
+}
+
+cityInput.addEventListener('focus', () => {
+  if (cityInput.value === committedLabel) cityInput.value = '';
+  ensureCities().then(() => {
+    if (cityInput.value.trim().length < 2) renderSuggest([], 'Type to search cities');
+  }).catch(() => renderSuggest([], 'City list failed to load'));
+});
+cityInput.addEventListener('blur', () => {
+  setTimeout(() => {
+    if (!cityInput.value.trim()) cityInput.value = committedLabel;
+  }, 150);
+});
+cityInput.addEventListener('input', () => {
+  const q = cityInput.value.trim();
+  clearTimeout(acTimer);
+  if (q.length < 2){
+    renderSuggest([], 'Type to search cities');
+    return;
+  }
+  acTimer = setTimeout(() => {
+    ensureCities().then(() => {
+      const hits = searchCities(q);
+      renderSuggest(hits, hits.length ? '' : 'No cities match');
+    }).catch(() => renderSuggest([], 'City list failed to load'));
+  }, 120);
+});
+cityInput.addEventListener('keydown', evt => {
+  if (!suggestEl.classList.contains('open')) return;
+  if (evt.key === 'ArrowDown'){
+    evt.preventDefault();
+    acIndex = Math.min(acItems.length - 1, acIndex + 1);
+    [...suggestEl.querySelectorAll('button')].forEach((b, i) => b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false'));
+  } else if (evt.key === 'ArrowUp'){
+    evt.preventDefault();
+    acIndex = Math.max(0, acIndex - 1);
+    [...suggestEl.querySelectorAll('button')].forEach((b, i) => b.setAttribute('aria-selected', i === acIndex ? 'true' : 'false'));
+  } else if (evt.key === 'Enter'){
+    evt.preventDefault();
+    if (acItems[acIndex]) pickPlace(acItems[acIndex]);
+  } else if (evt.key === 'Escape'){
+    closeSuggest();
+  }
+});
+document.addEventListener('click', evt => {
+  if (!document.getElementById('city-wrap').contains(evt.target)) closeSuggest();
+});
+
+window.addEventListener('resize', () => { if (DATA.length) render(); });
+setInterval(updateNowLine, 60000);
+document.addEventListener('keydown', evt => {
+  if (evt.key === 'Escape'){ hideHover(); closePin(); }
+});
+document.addEventListener('pointerdown', evt => {
+  if (!IS_COARSE) return;
+  if (ttPin.contains(evt.target)) return;
+  if (evt.target.closest('#wrap')) return;
+  hideHover();
+  closePin();
+});
+
+// --- saved city ----------------------------------------------------------
+function readSavedPlace(){
+  try {
+    const saved = JSON.parse(localStorage.getItem('witz-place') || 'null');
+    const id = Number(saved && (saved.geonameid || saved.id));
+    if (!saved || !Number.isFinite(id) || id <= 0) return null;
+    if (saved.geo && saved.geo !== 'geoname') return null;
+    return {
+      id,
+      geonameid: id,
+      value: saved.value || DEFAULT_PLACE.value,
+      geo: 'geoname',
+      cc: saved.cc || ''
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// --- date picker ---------------------------------------------------------
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const dateEl = document.getElementById('date');
+const dateBtn = document.getElementById('date-btn');
+const todayDot = document.getElementById('today-dot');
+const calEl = document.getElementById('cal');
+const calTitle = document.getElementById('cal-title');
+const calGrid = document.getElementById('cal-grid');
+let calView = 'day';
+let calY = 2026, calM = 8;
+
+function parseYMD(s){
+  const [y,m,d] = (s || '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return {y, m, d};
+}
+
+function fmtDateBtn(s){
+  const p = parseYMD(s);
+  if (!p) return 'Today';
+  const today = todayInTz(LOCATION.tzid || 'UTC');
+  if (s === today) return 'Today · ' + p.d + ' ' + MONTHS[p.m-1].slice(0,3);
+  return p.d + ' ' + MONTHS[p.m-1].slice(0,3) + ' ' + p.y;
+}
+
+function syncDateChrome(){
+  const today = todayInTz(LOCATION.tzid || 'UTC');
+  const val = dateEl.value || today;
+  dateBtn.textContent = fmtDateBtn(val);
+  todayDot.classList.toggle('on', val === today);
+}
+
+function applyDate(ymd, reload){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+  if (dateEl.value !== ymd) dateEl.value = ymd;
+  syncDateChrome();
+  closeCal();
+  if (reload !== false && LAST_PLACE){
+    loadPlace(LAST_PLACE).catch(err => {
+      document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
+    });
+  }
+}
+
+function jumpToday(){
+  applyDate(todayInTz(LOCATION.tzid || 'UTC'), true);
+}
+
+function openCal(){
+  const p = parseYMD(dateEl.value) || parseYMD(todayInTz(LOCATION.tzid || 'UTC'));
+  calY = p.y; calM = p.m - 1; calView = 'day';
+  calEl.hidden = false;
+  calEl.classList.add('open');
+  dateBtn.setAttribute('aria-expanded', 'true');
+  drawCal();
+}
+
+function closeCal(){
+  calEl.classList.remove('open');
+  calEl.hidden = true;
+  dateBtn.setAttribute('aria-expanded', 'false');
+}
+
+function drawCal(){
+  const today = todayInTz(LOCATION.tzid || 'UTC');
+  const sel = dateEl.value || today;
+  calGrid.innerHTML = '';
+  if (calView === 'year'){
+    const start = Math.floor(calY / 12) * 12;
+    calTitle.textContent = start + ' – ' + (start + 11);
+    calGrid.className = 'years';
+    for (let y = start; y < start + 12; y++){
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = y;
+      if (String(y) === sel.slice(0,4)) b.classList.add('sel');
+      if (String(y) === today.slice(0,4)) b.classList.add('today');
+      b.addEventListener('click', evt => { evt.stopPropagation(); calY = y; calView = 'month'; drawCal(); });
+      calGrid.appendChild(b);
+    }
+    return;
+  }
+  if (calView === 'month'){
+    calTitle.textContent = String(calY);
+    calGrid.className = 'months';
+    MONTHS.forEach((name, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = name.slice(0,3);
+      if (sel.slice(0,7) === calY + '-' + pad(i+1)) b.classList.add('sel');
+      if (today.slice(0,7) === calY + '-' + pad(i+1)) b.classList.add('today');
+      b.addEventListener('click', evt => { evt.stopPropagation(); calM = i; calView = 'day'; drawCal(); });
+      calGrid.appendChild(b);
+    });
+    return;
+  }
+  calTitle.textContent = MONTHS[calM] + ' ' + calY;
+  calGrid.className = 'days';
+  ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(d => {
+    const s = document.createElement('div');
+    s.className = 'dow';
+    s.textContent = d;
+    calGrid.appendChild(s);
+  });
+  const first = new Date(calY, calM, 1);
+  const startDow = first.getDay();
+  const daysIn = new Date(calY, calM + 1, 0).getDate();
+  const prevDays = new Date(calY, calM, 0).getDate();
+  for (let i = 0; i < 42; i++){
+    const b = document.createElement('button');
+    b.type = 'button';
+    let y = calY, m = calM, d = i - startDow + 1;
+    if (d < 1){
+      m -= 1; d = prevDays + d;
+      if (m < 0){ m = 11; y -= 1; }
+      b.classList.add('out');
+    } else if (d > daysIn){
+      d -= daysIn; m += 1;
+      if (m > 11){ m = 0; y += 1; }
+      b.classList.add('out');
+    }
+    const ymd = y + '-' + pad(m+1) + '-' + pad(d);
+    b.textContent = d;
+    if (ymd === sel) b.classList.add('sel');
+    if (ymd === today) b.classList.add('today');
+    b.addEventListener('click', evt => { evt.stopPropagation(); applyDate(ymd, true); });
+    calGrid.appendChild(b);
+  }
+}
+
+dateBtn.addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calEl.classList.contains('open')) closeCal();
+  else openCal();
+});
+todayDot.addEventListener('click', evt => {
+  evt.stopPropagation();
+  jumpToday();
+});
+document.getElementById('cal-prev').addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calView === 'year') calY -= 12;
+  else if (calView === 'month') calY -= 1;
+  else { calM -= 1; if (calM < 0){ calM = 11; calY -= 1; } }
+  drawCal();
+});
+document.getElementById('cal-next').addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calView === 'year') calY += 12;
+  else if (calView === 'month') calY += 1;
+  else { calM += 1; if (calM > 11){ calM = 0; calY += 1; } }
+  drawCal();
+});
+calTitle.addEventListener('click', evt => {
+  evt.stopPropagation();
+  if (calView === 'day') calView = 'month';
+  else if (calView === 'month') calView = 'year';
+  else calView = 'day';
+  drawCal();
+});
+calEl.addEventListener('click', evt => evt.stopPropagation());
+document.addEventListener('click', evt => {
+  const wrap = document.getElementById('date-wrap');
+  const path = typeof evt.composedPath === 'function' ? evt.composedPath() : [];
+  if ((wrap && path.includes(wrap)) || (wrap && wrap.contains(evt.target))) return;
+  closeCal();
+});
+
+document.getElementById('date').addEventListener('change', () => {
+  syncDateChrome();
+  if (LAST_PLACE) {
+    loadPlace(LAST_PLACE).catch(err => {
+      document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
+    });
+  }
+});
+
+
+// --- theme ---------------------------------------------------------------
+function currentTheme(){
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function applyTheme(mode){
+  const next = mode === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('witz-theme', next); } catch (e) {}
+  const btn = document.getElementById('theme-toggle');
+  if (btn){
+    btn.textContent = next === 'dark' ? 'Light' : 'Dark';
+    btn.setAttribute('aria-pressed', next === 'dark' ? 'true' : 'false');
+    btn.setAttribute('aria-label', next === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+  if (DATA.length) render();
+}
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+applyTheme(currentTheme());
+
+// --- boot ----------------------------------------------------------------
+(function boot(){
+  const place = readSavedPlace() || DEFAULT_PLACE;
+  committedLabel = place.value || DEFAULT_PLACE.value;
+  cityInput.value = committedLabel;
+  if (!dateEl.value) dateEl.value = todayInTz(place.tzid || 'UTC');
+  syncDateChrome();
+  loadPlace(place).catch(err => {
+    document.getElementById('sub').textContent = 'HebCal unavailable — ' + err.message;
+  });
+})();
